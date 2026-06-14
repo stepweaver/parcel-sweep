@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { api, RouteDetail } from "../api";
+import { api, type RouteDetail } from "../api";
 import { DeliveryMap } from "../components/DeliveryMap";
 import { StopCard } from "../components/StopCard";
 

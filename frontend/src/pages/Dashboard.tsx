@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, ManifestSummary, RouteSummary } from "../api";
+import { api, type ManifestSummary, type RouteSummary } from "../api";
 
 const statusColor: Record<string, string> = {
   loading: "#f59e0b",

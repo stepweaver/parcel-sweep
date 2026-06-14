@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { api, PackageDetail, RouteDetail } from "../api";
+import { api, type PackageDetail, type RouteDetail } from "../api";
 import { ScannerInput } from "../components/ScannerInput";
 import { PackageList } from "../components/PackageList";
 

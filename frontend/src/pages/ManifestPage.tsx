@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { api, ManifestSummary, PackageDetail } from "../api";
+import { api, type ManifestSummary, type PackageDetail } from "../api";
 import { PackageList } from "../components/PackageList";
 
 export function ManifestPage() {

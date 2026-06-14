@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import { v4 as uuidv4 } from "uuid";
-import { api, RouteDetail, RouteStopDetail } from "../api";
+import { api, type RouteDetail, type RouteStopDetail } from "../api";
 import { DeliveryMap } from "../components/DeliveryMap";
-import { AlertBanner, ActiveAlert } from "../components/AlertBanner";
+import { AlertBanner, type ActiveAlert } from "../components/AlertBanner";
 import { joinRoute, leaveRoute, onStopCompleted, onRouteComplete } from "../socket";
 
 // ── Client-side Haversine ──────────────────────────────────────────────────
