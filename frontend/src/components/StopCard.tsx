@@ -37,8 +37,8 @@ export function StopCard({ stop, isActive, onArrive, onComplete }: StopCardProps
         background: isActive ? "#fff8f8" : undefined,
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: ".4rem" }}>
-        <span style={{ fontWeight: 800, fontSize: "1.05rem" }}>
+      <div className="stop-card__header">
+        <span className="stop-card__title">
           #{stop.sequenceNumber} · {stop.packages[0]?.address ?? "Unknown address"}
           {stop.packages.length > 1 && (
             <span style={{ color: "#6b7280", fontWeight: 400, fontSize: ".85rem" }}>

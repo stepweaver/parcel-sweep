@@ -32,7 +32,7 @@ export function Dashboard() {
           <div className="page-title">Parcel Sweep</div>
           <div className="page-subtitle">Delivery Route Optimizer</div>
         </div>
-        <div style={{ marginLeft: "auto", display: "flex", gap: ".75rem" }}>
+        <div className="page-header__actions">
           <Link to="/manifests/new">
             <button className="btn-primary">+ Generate Manifest</button>
           </Link>

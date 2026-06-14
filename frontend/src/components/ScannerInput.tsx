@@ -19,7 +19,7 @@ export function ScannerInput({ onScan, disabled, placeholder = "Scan or type tra
   };
 
   return (
-    <div style={{ display: "flex", gap: ".5rem", marginBottom: "1rem" }}>
+    <div className="scanner-input">
       <input
         ref={inputRef}
         type="text"
@@ -29,13 +29,12 @@ export function ScannerInput({ onScan, disabled, placeholder = "Scan or type tra
         placeholder={placeholder}
         disabled={disabled}
         autoFocus
-        style={{ fontFamily: "monospace", fontSize: "1.05rem" }}
+        className="scanner-input__field"
       />
       <button
-        className="btn-primary"
+        className="btn-primary scanner-input__btn"
         onClick={submit}
         disabled={disabled || !value.trim()}
-        style={{ flexShrink: 0 }}
       >
         Scan
       </button>

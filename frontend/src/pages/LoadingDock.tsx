@@ -109,12 +109,12 @@ export function LoadingDock() {
         <Link to={`/manifests/${route.manifestId}`}>← Manifest</Link>
         <div>
           <div className="page-title">Loading Dock</div>
-          <div style={{ color: "#6b7280", fontSize: ".85rem" }}>
+          <div style={{ color: "#6b7280", fontSize: ".85rem", wordBreak: "break-word" }}>
             {route.driverName} · {route.startAddress}
           </div>
         </div>
-        <div style={{ marginLeft: "auto", display: "flex", gap: ".75rem", alignItems: "center" }}>
-          <span style={{ color: "#6b7280", fontSize: ".9rem" }}>
+        <div className="page-header__actions">
+          <span className="page-header__meta">
             {loadedPackages.length} loaded
           </span>
           <button

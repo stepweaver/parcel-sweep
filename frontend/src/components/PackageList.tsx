@@ -20,50 +20,36 @@ export function PackageList({ packages, onScan, showScanButton, emptyMessage = "
   }
 
   return (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Tracking #</th>
-            <th>Recipient</th>
-            <th>Address</th>
-            <th>Service</th>
-            <th>Status</th>
-            {showScanButton && <th></th>}
-          </tr>
-        </thead>
-        <tbody>
-          {packages.map((p) => (
-            <tr key={p.id} className={p.isGhost ? "alert-row" : ""}>
-              <td style={{ fontFamily: "monospace", fontSize: ".8rem" }}>
-                {p.trackingNumber.slice(0, 8)}…
-                {p.isGhost && <span className="badge badge-ghost" style={{ marginLeft: ".4rem" }}>Ghost</span>}
-              </td>
-              <td>{p.recipientName}</td>
-              <td>{p.address}<br /><span style={{ color: "#6b7280", fontSize: ".8rem" }}>{p.city}, {p.state} {p.zip}</span></td>
-              <td style={{ fontSize: ".8rem" }}>{p.serviceType}</td>
-              <td>
-                <span className={`badge ${statusBadge[p.status] ?? "badge-pending"}`}>
-                  {p.status}
-                </span>
-              </td>
-              {showScanButton && (
-                <td>
-                  {p.status === "pending" && onScan && (
-                    <button
-                      className="btn-ghost"
-                      style={{ fontSize: ".8rem", padding: ".25rem .6rem" }}
-                      onClick={() => onScan(p)}
-                    >
-                      Scan
-                    </button>
-                  )}
-                </td>
-              )}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="package-list">
+      {packages.map((p) => (
+        <div key={p.id} className={`package-row${p.isGhost ? " package-row--ghost" : ""}`}>
+          <div className="package-row__main">
+            <div className="package-row__top">
+              <span className="package-row__tracking">{p.trackingNumber}</span>
+              {p.isGhost && <span className="badge badge-ghost">Ghost</span>}
+            </div>
+            <div className="package-row__recipient">{p.recipientName}</div>
+            <div className="package-row__address">
+              {p.address}
+              <span className="package-row__city">{p.city}, {p.state} {p.zip}</span>
+            </div>
+          </div>
+          <div className="package-row__meta">
+            <span className="package-row__service">{p.serviceType}</span>
+            <span className={`badge ${statusBadge[p.status] ?? "badge-pending"}`}>
+              {p.status}
+            </span>
+            {showScanButton && p.status === "pending" && onScan && (
+              <button
+                className="btn-primary package-row__scan"
+                onClick={() => onScan(p)}
+              >
+                Scan
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

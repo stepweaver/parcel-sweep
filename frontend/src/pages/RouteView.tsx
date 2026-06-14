@@ -69,8 +69,7 @@ export function RouteView() {
           </div>
         </div>
         <button
-          className="btn-danger"
-          style={{ marginLeft: "auto" }}
+          className="btn-danger page-header__actions"
           onClick={handleStart}
           disabled={starting || route.status !== "optimized"}
         >
@@ -79,12 +78,12 @@ export function RouteView() {
       </div>
 
       {/* Export + navigation toolbar */}
-      <div className="card" style={{ marginBottom: "1.5rem", display: "flex", flexWrap: "wrap", gap: "1rem", alignItems: "center" }}>
-        <div>
+      <div className="card route-toolbar" style={{ marginBottom: "1.5rem" }}>
+        <div className="route-toolbar__section">
           <div style={{ fontWeight: 700, fontSize: ".9rem", marginBottom: ".35rem" }}>Export route</div>
           <ExportButtons routeId={route.id} disabled={!canExport} />
         </div>
-        <div style={{ borderLeft: "1px solid var(--border)", paddingLeft: "1rem" }}>
+        <div className="route-toolbar__section route-toolbar__section--bordered">
           <div style={{ fontWeight: 700, fontSize: ".9rem", marginBottom: ".35rem" }}>External GPS</div>
           <button
             className="btn-primary"
@@ -95,7 +94,7 @@ export function RouteView() {
             Open full route in Google Maps
           </button>
         </div>
-        <div style={{ marginLeft: "auto" }}>
+        <div className="route-toolbar__spacer">
           <button
             className="btn-ghost"
             style={{ fontSize: ".85rem" }}
@@ -123,9 +122,9 @@ export function RouteView() {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "380px 1fr", gap: "1rem", alignItems: "start" }}>
+      <div className="route-split">
         {/* Stop list */}
-        <div style={{ overflowY: "auto", maxHeight: "72vh" }}>
+        <div className="route-split__stops">
           {/* Depot card */}
           <div className="card" style={{ marginBottom: ".75rem", borderLeft: "4px solid #6b7280" }}>
             <strong>#0 · DEPOT</strong>
@@ -140,7 +139,7 @@ export function RouteView() {
         </div>
 
         {/* Map */}
-        <div style={{ height: "72vh", borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)" }}>
+        <div className="route-split__map">
           <DeliveryMap
             stops={route.stops}
             clusterMeters={route.clusterMeters}
