@@ -126,7 +126,7 @@ async function buildProposal(
   osrmBaseUrl: string
 ): Promise<RouteProposal> {
   const chunkStops = await buildChunkStops(stops, depot, osrmBaseUrl);
-  const packageIds = chunkStops.flatMap((s) => s.packageIds);
+  const packageIds = [...new Set(chunkStops.flatMap((s) => s.packageIds))];
   const driveSeconds = chunkStops.reduce((sum, s) => sum + s.driveSecondsFromPrev, 0);
   const driveMiles = chunkStops.reduce((sum, s) => sum + s.driveMilesFromPrev, 0);
 

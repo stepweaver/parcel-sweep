@@ -207,7 +207,8 @@ manifestsRouter.post(
         res.status(400).json({ error: "routeNumber is required." });
         return;
       }
-      if (!proposal?.packageIds?.length) {
+      const uniquePackageIds = [...new Set(proposal?.packageIds ?? [])];
+      if (!uniquePackageIds.length) {
         res.status(400).json({ error: "proposal with packageIds is required." });
         return;
       }
@@ -223,11 +224,11 @@ manifestsRouter.post(
       }
 
       const packageRows = queryAll<PackageRow>(
-        db.prepare(`SELECT * FROM packages WHERE id IN (${proposal.packageIds.map(() => "?").join(",")})`),
-        ...proposal.packageIds
+        db.prepare(`SELECT * FROM packages WHERE id IN (${uniquePackageIds.map(() => "?").join(",")})`),
+        ...uniquePackageIds
       );
 
-      if (packageRows.length !== proposal.packageIds.length) {
+      if (packageRows.length !== uniquePackageIds.length) {
         res.status(400).json({ error: "One or more packages in the proposal were not found." });
         return;
       }
@@ -285,7 +286,7 @@ manifestsRouter.post(
       const assignPkg = db.prepare(
         `UPDATE packages SET assigned_route_id = ? WHERE id = ? AND manifest_id = ? AND assigned_route_id IS NULL`
       );
-      for (const pkgId of proposal.packageIds) {
+      for (const pkgId of uniquePackageIds) {
         const changes = exec(assignPkg, routeId, pkgId, manifestId);
         if (changes === 0) {
           exec(db.prepare(`DELETE FROM routes WHERE id = ?`), routeId);
@@ -302,7 +303,7 @@ manifestsRouter.post(
         driverName: route.driver_name,
         status: route.status,
         startAddress: route.start_address,
-        assignedPackageCount: proposal.packageIds.length,
+        assignedPackageCount: uniquePackageIds.length,
         proposalId: proposal.proposalId,
       });
     } catch (err) {

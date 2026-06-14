@@ -63,13 +63,14 @@ function packagesToGeocodedStops(packages: PackageRow[]): GeocodedStop[] {
 
 function matchPackagesToCluster(
   cluster: Cluster,
-  packages: PackageRow[]
+  packages: PackageRow[],
+  excludeIds: ReadonlySet<string>
 ): PackageRow[] {
   const matched = new Set<string>();
   for (const stop of cluster.stops) {
     const addrPrefix = stop.address.split(",")[0].toLowerCase().trim();
     for (const p of packages) {
-      if (matched.has(p.id)) continue;
+      if (matched.has(p.id) || excludeIds.has(p.id)) continue;
       const full = `${p.address}, ${p.city}, ${p.state} ${p.zip}`.toLowerCase();
       if (
         p.address.toLowerCase().trim() === addrPrefix ||
@@ -133,9 +134,13 @@ export async function planRouteFromPackages(
 
   const alertsPerCluster = generateAlerts(orderedClusters, route.alert_meters);
 
+  const assignedPackageIds = new Set<string>();
   const stops: PlannedStop[] = orderedClusters.map((cluster, i) => {
     const metrics: LegMetrics = legMetrics[i];
-    const matched = matchPackagesToCluster(cluster, valid);
+    const matched = matchPackagesToCluster(cluster, valid, assignedPackageIds);
+    for (const pkg of matched) {
+      assignedPackageIds.add(pkg.id);
+    }
     return {
       sequenceNumber: i + 1,
       clusterId: cluster.clusterId,
