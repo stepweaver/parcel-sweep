@@ -46,7 +46,7 @@ export function StopCard({ stop, isActive, onArrive, onComplete }: StopCardProps
             </span>
           )}
         </span>
-        <span style={{ color: statusColor[stop.status], fontWeight: 700, fontSize: ".85rem" }}>
+        <span className="stop-card__status" style={{ color: statusColor[stop.status] }}>
           {statusLabel[stop.status]}
         </span>
       </div>
@@ -57,7 +57,7 @@ export function StopCard({ stop, isActive, onArrive, onComplete }: StopCardProps
         <strong>{totalPkgs}</strong> {totalPkgs === 1 ? "package" : "packages"}
       </div>
 
-      <div style={{ fontSize: ".85rem", marginBottom: stop.alerts.length ? ".4rem" : 0 }}>
+      <div className="text-wrap" style={{ fontSize: ".85rem", marginBottom: stop.alerts.length ? ".4rem" : 0 }}>
         {stop.packages.map((p) => (
           <div key={p.id} style={{ color: "#374151" }}>
             {p.address} — <em>{p.recipientName}</em>
@@ -69,7 +69,7 @@ export function StopCard({ stop, isActive, onArrive, onComplete }: StopCardProps
       </div>
 
       {stop.alerts.length > 0 && (
-        <div style={{ background: "#fffbeb", border: "1px solid #fde047", borderRadius: 6, padding: ".5rem .75rem", fontSize: ".82rem", color: "#92400e" }}>
+        <div className="text-wrap" style={{ background: "#fffbeb", border: "1px solid #fde047", borderRadius: 6, padding: ".5rem .75rem", fontSize: ".82rem", color: "#92400e" }}>
           {stop.alerts.map((a, i) => <div key={i}>⚠ {a}</div>)}
         </div>
       )}

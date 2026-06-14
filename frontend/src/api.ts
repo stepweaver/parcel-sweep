@@ -48,6 +48,7 @@ export interface RouteStopDetail {
 export interface RouteDetail {
   id: string;
   manifestId: string;
+  routeNumber: string | null;
   driverName: string;
   vehicleId: string | null;
   status: "loading" | "optimized" | "in_delivery" | "complete";
@@ -56,6 +57,8 @@ export interface RouteDetail {
   startLng: number | null;
   clusterMeters: number;
   alertMeters: number;
+  returnDriveSeconds: number;
+  returnDriveMiles: number;
   createdAt: string;
   optimizedAt: string | null;
   completedAt: string | null;
@@ -65,12 +68,17 @@ export interface RouteDetail {
 export interface RouteSummary {
   id: string;
   manifestId: string;
+  routeNumber: string | null;
   driverName: string;
   status: string;
   startAddress: string;
   createdAt: string;
   optimizedAt: string | null;
   stopCount: number;
+  remainingStops: number;
+  nextStopAddress: string | null;
+  nextStopDriveSeconds: number | null;
+  nextStopDriveMiles: number | null;
 }
 
 export interface LoadOrderItem {
@@ -121,11 +129,27 @@ export const api = {
     create: (data: {
       manifestId: string;
       startAddress: string;
+      routeNumber: string;
       driverName?: string;
       vehicleId?: string;
       clusterMeters?: number;
       alertMeters?: number;
     }) => apiFetch<RouteDetail>("/api/routes", { method: "POST", body: JSON.stringify(data) }),
+    update: (id: string, data: {
+      driverName?: string;
+      startAddress?: string;
+      manifestId?: string;
+    }) => apiFetch<RouteDetail>(`/api/routes/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+    unload: (id: string, packageId: string) =>
+      apiFetch<{ success: boolean; packageId: string }>(
+        `/api/routes/${id}/unload`,
+        { method: "POST", body: JSON.stringify({ packageId }) }
+      ),
+    removePackage: (routeId: string, packageId: string) =>
+      apiFetch<{ success: boolean; packageId: string }>(
+        `/api/routes/${routeId}/packages/${packageId}`,
+        { method: "DELETE" }
+      ),
     scan: (id: string, trackingNumber: string) =>
       apiFetch<{ package: PackageDetail; isGhost: boolean; message: string }>(
         `/api/routes/${id}/scan`,
@@ -151,5 +175,9 @@ export const api = {
       apiFetch<LoadOrderResponse>(`/api/routes/${id}/load-order`),
     exportUrl: (id: string, format: "gpx" | "kml" | "csv") =>
       `/api/routes/${id}/export/${format}`,
+  },
+
+  admin: {
+    routes: () => apiFetch<RouteSummary[]>("/api/admin/routes"),
   },
 };

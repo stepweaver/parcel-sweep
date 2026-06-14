@@ -13,6 +13,7 @@ import { optimizeRouteRouter } from "./routes/optimizeRoute.js";
 import { manifestsRouter } from "./routes/manifests.js";
 import { createRoutesRouter } from "./routes/routes.js";
 import { packagesRouter } from "./routes/packages.js";
+import { adminRouter } from "./routes/admin.js";
 
 function resolveFrontendOrigin(): string {
   if (process.env.FRONTEND_ORIGIN) return process.env.FRONTEND_ORIGIN;
@@ -67,6 +68,7 @@ app.get("/health", (_req, res) => {
 app.use("/api/optimize-route", optimizeRouteRouter);
 app.use("/api/manifests", manifestsRouter);
 app.use("/api/routes", createRoutesRouter(io));
+app.use("/api/admin", adminRouter);
 app.use("/api/packages", packagesRouter);
 
 // ── Production frontend (Vite build) ─────────────────────────
@@ -139,7 +141,7 @@ httpServer.listen(PORT, () => {
   console.log(`  GET   /api/manifests`);
   console.log(`  POST  /api/routes`);
   console.log(`  POST  /api/routes/:id/optimize`);
-  console.log(`  GET   /api/routes/:id/load-order`);
+  console.log(`  GET   /api/admin/routes`);
   console.log(`  GET   /api/routes/:id/export/{gpx,kml,csv}`);
   console.log(`  Geocoding:   ${isGoogleGeocodingConfigured() ? "Google API key set" : "Google not set — using OpenStreetMap fallback"}`);
   console.log(`  WebSocket /socket.io\n`);

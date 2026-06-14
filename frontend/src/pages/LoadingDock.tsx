@@ -4,6 +4,7 @@ import { api, type PackageDetail, type RouteDetail, type LoadOrderResponse } fro
 import { ScannerInput } from "../components/ScannerInput";
 import { PackageList } from "../components/PackageList";
 import { LoadOrderList } from "../components/LoadOrderList";
+import { SessionSettings } from "../components/SessionSettings";
 
 interface ScanResult {
   isGhost: boolean;
@@ -80,6 +81,30 @@ export function LoadingDock() {
     await handleScan(pkg.trackingNumber);
   };
 
+  const handleRemovePackage = async (pkg: PackageDetail) => {
+    if (!id) return;
+    const label = pkg.isGhost ? "Remove this ghost package from the truck?" : "Remove this package from the truck?";
+    if (!confirm(label)) return;
+    try {
+      if (pkg.isGhost) {
+        await api.routes.removePackage(id, pkg.id);
+      } else {
+        await api.routes.unload(id, pkg.id);
+      }
+      await loadRoute(id);
+      void fetchLoadOrder(id);
+    } catch (e) {
+      alert(`Error: ${(e as Error).message}`);
+    }
+  };
+
+  const handleSessionUpdated = async (updated: RouteDetail) => {
+    setRoute(updated);
+    const { packages } = await api.manifests.get(updated.manifestId);
+    setManifestPackages(packages);
+    if (id) void fetchLoadOrder(id);
+  };
+
   const handleOptimize = async () => {
     if (!id) return;
     setOptimizing(true);
@@ -109,7 +134,7 @@ export function LoadingDock() {
         <Link to={`/manifests/${route.manifestId}`}>← Manifest</Link>
         <div>
           <div className="page-title">Loading Dock</div>
-          <div style={{ color: "#6b7280", fontSize: ".85rem", wordBreak: "break-word" }}>
+          <div className="text-wrap" style={{ color: "#6b7280", fontSize: ".85rem" }}>
             {route.driverName} · {route.startAddress}
           </div>
         </div>
@@ -126,6 +151,10 @@ export function LoadingDock() {
           </button>
         </div>
       </div>
+
+      {isLoading && (
+        <SessionSettings route={route} onUpdated={handleSessionUpdated} />
+      )}
 
       {isLoading && (
         <div className="card" style={{ marginBottom: "1.5rem" }}>
@@ -147,7 +176,6 @@ export function LoadingDock() {
       )}
 
       <div className="grid-2">
-        {/* Left — manifest packages to scan */}
         <div className="card">
           <h2 className="panel-title" style={{ marginBottom: "1rem" }}>
             Manifest ({pendingPackages.length} remaining)
@@ -160,7 +188,6 @@ export function LoadingDock() {
           />
         </div>
 
-        {/* Right — load order + scanned packages */}
         <div>
           <div className="card" style={{ marginBottom: "1rem" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: ".75rem", gap: ".5rem", flexWrap: "wrap" }}>
@@ -195,7 +222,12 @@ export function LoadingDock() {
             <h2 className="panel-title" style={{ marginBottom: "1rem" }}>
               Loaded ({loadedPackages.length} packages)
             </h2>
-            <PackageList packages={loadedPackages} emptyMessage="Scan packages to add them here." />
+            <PackageList
+              packages={loadedPackages}
+              onRemove={isLoading ? handleRemovePackage : undefined}
+              showRemoveButton={isLoading}
+              emptyMessage="Scan packages to add them here."
+            />
           </div>
 
           {ghostPackages.length > 0 && (
@@ -207,8 +239,17 @@ export function LoadingDock() {
                 These tracking numbers were not found in the manifest. They will be included in the route at their best-estimated location.
               </div>
               {ghostPackages.map((p) => (
-                <div key={p.id} style={{ fontFamily: "monospace", fontSize: ".8rem", padding: ".3rem 0", borderBottom: "1px solid var(--border)" }}>
-                  {p.trackingNumber}
+                <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontFamily: "monospace", fontSize: ".8rem", padding: ".3rem 0", borderBottom: "1px solid var(--border)" }}>
+                  <span>{p.trackingNumber}</span>
+                  {isLoading && (
+                    <button
+                      className="btn-ghost"
+                      style={{ color: "#dc2626", fontSize: ".75rem", padding: ".15rem .4rem" }}
+                      onClick={() => void handleRemovePackage(p)}
+                    >
+                      Remove
+                    </button>
+                  )}
                 </div>
               ))}
             </div>

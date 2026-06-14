@@ -56,7 +56,7 @@ export function LoadOrderList({ items, source, compact = false }: LoadOrderListP
               {item.loadPosition}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 700, fontSize: compact ? ".85rem" : ".95rem", wordBreak: "break-word" }}>
+              <div className="text-wrap" style={{ fontWeight: 700, fontSize: compact ? ".85rem" : ".95rem" }}>
                 {item.address}
                 {item.packages.length > 1 && (
                   <span style={{ color: "#6b7280", fontWeight: 400, fontSize: ".8rem" }}>

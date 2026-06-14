@@ -1,0 +1,45 @@
+/** Station and driver defaults for South Bend operations. */
+
+export interface StationPreset {
+  id: string;
+  name: string;
+  address: string;
+}
+
+export const STATIONS: StationPreset[] = [
+  {
+    id: "chippewa",
+    name: "Chippewa",
+    address: "4015 S Main St, South Bend, IN 46614",
+  },
+  {
+    id: "mckinley",
+    name: "McKinley Ave",
+    address: "3800 McKinley Ave, South Bend, IN 46628",
+  },
+];
+
+export const DEFAULT_STATION = STATIONS[0];
+
+export const DEFAULT_DRIVER_NAMES = ["Driver 1", "Driver 2", "Driver 3"];
+
+const DRIVER_STORAGE_KEY = "parcel-sweep:recent-drivers";
+
+export function getRecentDrivers(): string[] {
+  try {
+    const raw = localStorage.getItem(DRIVER_STORAGE_KEY);
+    if (!raw) return [...DEFAULT_DRIVER_NAMES];
+    const parsed = JSON.parse(raw) as string[];
+    return parsed.length > 0 ? parsed : [...DEFAULT_DRIVER_NAMES];
+  } catch {
+    return [...DEFAULT_DRIVER_NAMES];
+  }
+}
+
+export function rememberDriver(name: string): void {
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  const recent = getRecentDrivers().filter((d) => d !== trimmed);
+  recent.unshift(trimmed);
+  localStorage.setItem(DRIVER_STORAGE_KEY, JSON.stringify(recent.slice(0, 8)));
+}

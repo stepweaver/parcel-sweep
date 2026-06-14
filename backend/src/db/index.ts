@@ -111,4 +111,24 @@ function initSchema(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_route_stops_route   ON route_stops(route_id, sequence_number);
     CREATE INDEX IF NOT EXISTS idx_gps_pings_route     ON gps_pings(route_id, recorded_at);
   `);
+
+  migrateSchema(db);
+}
+
+function migrateSchema(db: DatabaseSync): void {
+  const cols = queryColumnNames(db, "routes");
+  if (!cols.has("return_drive_seconds")) {
+    db.exec(`ALTER TABLE routes ADD COLUMN return_drive_seconds INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!cols.has("return_drive_miles")) {
+    db.exec(`ALTER TABLE routes ADD COLUMN return_drive_miles REAL NOT NULL DEFAULT 0`);
+  }
+  if (!cols.has("route_number")) {
+    db.exec(`ALTER TABLE routes ADD COLUMN route_number TEXT`);
+  }
+}
+
+function queryColumnNames(db: DatabaseSync, table: string): Set<string> {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  return new Set(rows.map((r) => r.name));
 }

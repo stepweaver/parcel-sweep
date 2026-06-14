@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type ManifestSummary, type RouteSummary } from "../api";
-
-const statusColor: Record<string, string> = {
-  loading: "#f59e0b",
-  optimized: "#3b82f6",
-  in_delivery: "#da291c",
-  complete: "#16a34a",
-};
+import {
+  routeHref,
+  routeStatusColor,
+  routeStatusLabel,
+  routeStopsLabel,
+  routeSubline,
+} from "../utils/routeDisplay";
 
 export function Dashboard() {
   const [manifests, setManifests] = useState<ManifestSummary[]>([]);
@@ -75,23 +75,30 @@ export function Dashboard() {
                 </div>
               ) : (
                 <div>
-                  {manifests.slice(0, 8).map((m) => (
+                  {manifests.slice(0, 8).map((m) => {
+                    const routeForManifest = routes.find((r) => r.manifestId === m.id);
+                    const label = routeForManifest?.routeNumber
+                      ? `Route ${routeForManifest.routeNumber}`
+                      : `ZIP ${m.zipCode}`;
+
+                    return (
                     <Link
                       key={m.id}
                       to={`/manifests/${m.id}`}
                       className="list-row"
                     >
-                      <div>
-                        <strong>ZIP {m.zipCode}</strong>
-                        <div style={{ color: "#6b7280", fontSize: ".8rem" }}>
+                      <div className="list-row__main">
+                        <strong>{label}</strong>
+                        <div className="list-row__sub">
                           {new Date(m.generatedAt).toLocaleString()}
                         </div>
                       </div>
-                      <div style={{ textAlign: "right" }}>
+                      <div className="list-row__meta">
                         <strong>{m.totalPackages}</strong> packages
                       </div>
                     </Link>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -100,6 +107,7 @@ export function Dashboard() {
             <div className="card">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
                 <h2 className="panel-title">Routes</h2>
+                <Link to="/admin" style={{ fontSize: ".85rem" }}>Ops view →</Link>
               </div>
               {routes.length === 0 ? (
                 <div className="text-meta" style={{ textAlign: "center", padding: "1.5rem" }}>
@@ -107,26 +115,31 @@ export function Dashboard() {
                 </div>
               ) : (
                 <div>
-                  {routes.slice(0, 8).map((r) => (
-                    <Link
-                      key={r.id}
-                      to={r.status === "in_delivery" || r.status === "optimized" ? `/routes/${r.id}/drive` : `/routes/${r.id}/load`}
-                      className="list-row"
-                    >
-                      <div>
-                        <strong>{r.driverName}</strong>
-                        <div style={{ color: "#6b7280", fontSize: ".8rem" }}>
-                          {r.startAddress.slice(0, 35)}…
+                  {routes.slice(0, 8).map((r) => {
+                    const subline = routeSubline(r);
+
+                    return (
+                      <Link
+                        key={r.id}
+                        to={routeHref(r)}
+                        className="list-row"
+                      >
+                        <div className="list-row__main">
+                          <strong>{r.driverName}</strong>
+                          {subline && <div className="list-row__sub">{subline}</div>}
                         </div>
-                      </div>
-                      <div style={{ textAlign: "right" }}>
-                        <span style={{ color: statusColor[r.status] ?? "#6b7280", fontWeight: 700, fontSize: ".85rem" }}>
-                          {r.status}
-                        </span>
-                        <div style={{ color: "#6b7280", fontSize: ".8rem" }}>{r.stopCount} stops</div>
-                      </div>
-                    </Link>
-                  ))}
+                        <div className="list-row__meta">
+                          <span
+                            className="list-row__status"
+                            style={{ color: routeStatusColor[r.status] ?? "#6b7280" }}
+                          >
+                            {routeStatusLabel[r.status] ?? r.status}
+                          </span>
+                          <div className="list-row__meta-sub">{routeStopsLabel(r)}</div>
+                        </div>
+                      </Link>
+                    );
+                  })}
                 </div>
               )}
             </div>

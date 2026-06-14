@@ -3,7 +3,9 @@ import type { PackageDetail } from "../api";
 interface PackageListProps {
   packages: PackageDetail[];
   onScan?: (pkg: PackageDetail) => void;
+  onRemove?: (pkg: PackageDetail) => void;
   showScanButton?: boolean;
+  showRemoveButton?: boolean;
   emptyMessage?: string;
 }
 
@@ -14,7 +16,14 @@ const statusBadge: Record<string, string> = {
   delivered: "badge-delivered",
 };
 
-export function PackageList({ packages, onScan, showScanButton, emptyMessage = "No packages." }: PackageListProps) {
+export function PackageList({
+  packages,
+  onScan,
+  onRemove,
+  showScanButton,
+  showRemoveButton,
+  emptyMessage = "No packages.",
+}: PackageListProps) {
   if (packages.length === 0) {
     return <div style={{ color: "#9ca3af", textAlign: "center", padding: "2rem" }}>{emptyMessage}</div>;
   }
@@ -25,11 +34,11 @@ export function PackageList({ packages, onScan, showScanButton, emptyMessage = "
         <div key={p.id} className={`package-row${p.isGhost ? " package-row--ghost" : ""}`}>
           <div className="package-row__main">
             <div className="package-row__top">
-              <span className="package-row__tracking">{p.trackingNumber}</span>
+              <span className="package-row__tracking text-break-all">{p.trackingNumber}</span>
               {p.isGhost && <span className="badge badge-ghost">Ghost</span>}
             </div>
-            <div className="package-row__recipient">{p.recipientName}</div>
-            <div className="package-row__address">
+            <div className="package-row__recipient text-wrap">{p.recipientName}</div>
+            <div className="package-row__address text-wrap">
               {p.address}
               <span className="package-row__city">{p.city}, {p.state} {p.zip}</span>
             </div>
@@ -45,6 +54,15 @@ export function PackageList({ packages, onScan, showScanButton, emptyMessage = "
                 onClick={() => onScan(p)}
               >
                 Scan
+              </button>
+            )}
+            {showRemoveButton && onRemove && (
+              <button
+                className="btn-ghost package-row__scan"
+                style={{ color: "#dc2626", fontSize: ".75rem" }}
+                onClick={() => onRemove(p)}
+              >
+                Remove
               </button>
             )}
           </div>

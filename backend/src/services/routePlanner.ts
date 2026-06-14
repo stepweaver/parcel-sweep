@@ -27,6 +27,7 @@ export interface PlannedStop {
 export interface RoutePlanResult {
   depot: LatLng;
   stops: PlannedStop[];
+  returnLeg: LegMetrics | null;
 }
 
 function packagesToGeocodedStops(packages: PackageRow[]): GeocodedStop[] {
@@ -117,5 +118,10 @@ export async function planRouteFromPackages(
     };
   });
 
-  return { depot, stops };
+  const lastCluster = orderedClusters[orderedClusters.length - 1];
+  const returnLeg = lastCluster
+    ? await fetchLegMetrics(lastCluster.centroid, depot, osrmBaseUrl)
+    : null;
+
+  return { depot, stops, returnLeg };
 }

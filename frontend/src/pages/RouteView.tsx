@@ -43,8 +43,13 @@ export function RouteView() {
   if (error) return <div className="page" style={{ color: "#dc2626" }}>Error: {error}</div>;
   if (!route) return null;
 
-  const totalDriveMin = Math.round(route.stops.reduce((s, stop) => s + stop.driveSecondsFromPrev, 0) / 60);
-  const totalMiles = Math.round(route.stops.reduce((s, stop) => s + stop.driveMilesFromPrev, 0) * 10) / 10;
+  const returnSeconds = route.returnDriveSeconds ?? 0;
+  const returnMiles = route.returnDriveMiles ?? 0;
+  const outboundSeconds = route.stops.reduce((s, stop) => s + stop.driveSecondsFromPrev, 0);
+  const outboundMiles = route.stops.reduce((s, stop) => s + stop.driveMilesFromPrev, 0);
+  const totalDriveMin = Math.round((outboundSeconds + returnSeconds) / 60);
+  const totalMiles = Math.round((outboundMiles + returnMiles) * 10) / 10;
+  const returnDriveMin = Math.round(returnSeconds / 60);
   const totalPkgs = route.stops.reduce((s, stop) => s + stop.packages.reduce((ss, p) => ss + p.packageCount, 0), 0);
   const alertStops = route.stops.filter((s) => s.alerts.length > 0).length;
   const canExport = route.stops.length > 0;
@@ -115,7 +120,7 @@ export function RouteView() {
       {/* Summary cards */}
       <div className="grid-3" style={{ marginBottom: "1.5rem" }}>
         <div className="card stat-card"><div className="stat-value">{route.stops.length}</div><div className="stat-label">Stops</div></div>
-        <div className="card stat-card"><div className="stat-value">{totalMiles}</div><div className="stat-label">Total Miles</div></div>
+        <div className="card stat-card"><div className="stat-value">{totalMiles}</div><div className="stat-label">Round-Trip Miles</div></div>
         <div className="card stat-card">
           <div className="stat-value" style={{ color: alertStops > 0 ? "#f59e0b" : undefined }}>{alertStops}</div>
           <div className="stat-label">Alert Stops</div>
@@ -128,13 +133,22 @@ export function RouteView() {
           {/* Depot card */}
           <div className="card" style={{ marginBottom: ".75rem", borderLeft: "4px solid #6b7280" }}>
             <strong>#0 · DEPOT</strong>
-            <div style={{ color: "#6b7280", fontSize: ".85rem" }}>{route.startAddress}</div>
+            <div className="text-wrap" style={{ color: "#6b7280", fontSize: ".85rem" }}>{route.startAddress}</div>
           </div>
           {route.stops.map((stop) => (
             <StopCard key={stop.id} stop={stop} />
           ))}
+          {returnSeconds > 0 && (
+            <div className="card" style={{ marginBottom: ".75rem", borderLeft: "4px solid #6b7280" }}>
+              <strong>Return · Loading Dock</strong>
+              <div className="text-wrap" style={{ color: "#6b7280", fontSize: ".85rem" }}>{route.startAddress}</div>
+              <div style={{ fontSize: ".85rem", marginTop: ".35rem" }}>
+                {returnDriveMin} min · {returnMiles} mi from last stop
+              </div>
+            </div>
+          )}
           <div style={{ color: "#6b7280", fontSize: ".85rem", textAlign: "center", padding: "1rem" }}>
-            Est. {totalDriveMin} min · {totalMiles} miles total driving
+            Est. {totalDriveMin} min · {totalMiles} mi round trip (includes return to dock)
           </div>
         </div>
 

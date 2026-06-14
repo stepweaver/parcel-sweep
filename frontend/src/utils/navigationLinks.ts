@@ -53,26 +53,31 @@ export function appleMapsStopUrl(target: NavTarget): string {
 }
 
 /**
- * Google Maps multi-stop route: depot → all pending stops in sequence.
+ * Google Maps multi-stop route: depot → all stops → return to depot.
  * Limited to ~10 waypoints by Google; truncates if longer.
  */
 export function googleMapsFullRouteUrl(
   start: NavTarget,
-  stops: Array<{ lat: number; lng: number }>
+  stops: Array<{ lat: number; lng: number }>,
+  returnToDepot = true
 ): string {
   if (stops.length === 0) return googleMapsStopUrl(start);
 
   const origin = `${start.lat},${start.lng}`;
-  const destination = `${stops[stops.length - 1].lat},${stops[stops.length - 1].lng}`;
-  const middle = stops.slice(0, -1).slice(0, 9);
+  const destination = returnToDepot
+    ? origin
+    : `${stops[stops.length - 1].lat},${stops[stops.length - 1].lng}`;
+  const waypoints = returnToDepot
+    ? stops.slice(0, 10)
+    : stops.slice(0, -1).slice(0, 9);
   const params = new URLSearchParams({
     api: "1",
     origin,
     destination,
     travelmode: "driving",
   });
-  if (middle.length > 0) {
-    params.set("waypoints", middle.map((s) => `${s.lat},${s.lng}`).join("|"));
+  if (waypoints.length > 0) {
+    params.set("waypoints", waypoints.map((s) => `${s.lat},${s.lng}`).join("|"));
   }
   return `https://www.google.com/maps/dir/?${params.toString()}`;
 }

@@ -129,6 +129,7 @@ export type RouteStatus = "loading" | "optimized" | "in_delivery" | "complete";
 export interface RouteRow {
   id: string;
   manifest_id: string;
+  route_number: string | null;
   driver_name: string;
   vehicle_id: string | null;
   status: RouteStatus;
@@ -137,6 +138,8 @@ export interface RouteRow {
   start_lng: number | null;
   cluster_meters: number;
   alert_meters: number;
+  return_drive_seconds: number;
+  return_drive_miles: number;
   created_at: string;
   optimized_at: string | null;
   completed_at: string | null;
@@ -222,6 +225,7 @@ export interface RouteStopDetail {
 export interface RouteDetail {
   id: string;
   manifestId: string;
+  routeNumber: string | null;
   driverName: string;
   vehicleId: string | null;
   status: RouteStatus;
@@ -230,6 +234,8 @@ export interface RouteDetail {
   startLng: number | null;
   clusterMeters: number;
   alertMeters: number;
+  returnDriveSeconds: number;
+  returnDriveMiles: number;
   createdAt: string;
   optimizedAt: string | null;
   completedAt: string | null;
@@ -249,4 +255,20 @@ export interface LoadOrderResponse {
   source: "optimized" | "preview";
   totalStops: number;
   items: LoadOrderItem[];
+}
+
+export interface RouteSummary {
+  id: string;
+  manifestId: string;
+  routeNumber: string | null;
+  driverName: string;
+  status: string;
+  startAddress: string;
+  createdAt: string;
+  optimizedAt: string | null;
+  stopCount: number;
+  remainingStops: number;
+  nextStopAddress: string | null;
+  nextStopDriveSeconds: number | null;
+  nextStopDriveMiles: number | null;
 }

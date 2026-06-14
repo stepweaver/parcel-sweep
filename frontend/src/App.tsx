@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, NavLink } from "react-router-dom";
 import { Dashboard } from "./pages/Dashboard";
+import { Admin } from "./pages/Admin";
 import { ManifestPage } from "./pages/ManifestPage";
 import { LoadingDock } from "./pages/LoadingDock";
 import { RouteView } from "./pages/RouteView";
@@ -17,6 +18,12 @@ function Nav() {
             className={({ isActive }) => (isActive ? "app-nav-link active" : "app-nav-link")}
           >
             Dashboard
+          </NavLink>
+          <NavLink
+            to="/admin"
+            className={({ isActive }) => (isActive ? "app-nav-link active" : "app-nav-link")}
+          >
+            Admin
           </NavLink>
           <NavLink
             to="/manifests/new"
@@ -45,6 +52,7 @@ export default function App() {
               <Nav />
               <Routes>
                 <Route path="/" element={<Dashboard />} />
+                <Route path="/admin" element={<Admin />} />
                 <Route path="/manifests/:id" element={<ManifestPage />} />
                 <Route path="/routes/:id/load" element={<LoadingDock />} />
                 <Route path="/routes/:id/route" element={<RouteView />} />

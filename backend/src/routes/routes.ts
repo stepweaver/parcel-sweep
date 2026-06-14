@@ -6,6 +6,7 @@ import { queryAll, queryOne, exec } from "../db/helpers.js";
 import { haversineMeters } from "../services/clusterer.js";
 import { planRouteFromPackages, resolveDepot } from "../services/routePlanner.js";
 import { buildGpx, buildKml, buildCsv } from "../services/routeExporter.js";
+import { buildRouteSummaries } from "../services/routeSummaries.js";
 import {
   PackageRow,
   RouteRow,
@@ -16,7 +17,6 @@ import {
   LoadOrderResponse,
   LoadOrderItem,
 } from "../types/index.js";
-
 
 export function createRoutesRouter(io: SocketServer): Router {
   const router = Router();
@@ -66,10 +66,13 @@ export function createRoutesRouter(io: SocketServer): Router {
     });
 
     return {
-      id: route.id, manifestId: route.manifest_id, driverName: route.driver_name,
+      id: route.id, manifestId: route.manifest_id, routeNumber: route.route_number,
+      driverName: route.driver_name,
       vehicleId: route.vehicle_id, status: route.status, startAddress: route.start_address,
       startLat: route.start_lat, startLng: route.start_lng,
       clusterMeters: route.cluster_meters, alertMeters: route.alert_meters,
+      returnDriveSeconds: route.return_drive_seconds ?? 0,
+      returnDriveMiles: route.return_drive_miles ?? 0,
       createdAt: route.created_at, optimizedAt: route.optimized_at,
       completedAt: route.completed_at, stops: stopDetails,
     };
@@ -78,21 +81,7 @@ export function createRoutesRouter(io: SocketServer): Router {
   // ── GET /api/routes ───────────────────────────────────────
   router.get("/", (_req: Request, res: Response, next: NextFunction): void => {
     try {
-      const db = getDb();
-      const rows = queryAll<RouteRow & { stop_count: number }>(
-        db.prepare(`
-          SELECT r.*, COUNT(DISTINCT rs.id) as stop_count
-          FROM routes r
-          LEFT JOIN route_stops rs ON rs.route_id = r.id
-          GROUP BY r.id
-          ORDER BY r.created_at DESC
-        `)
-      );
-      res.json(rows.map((r) => ({
-        id: r.id, manifestId: r.manifest_id, driverName: r.driver_name,
-        status: r.status, startAddress: r.start_address, createdAt: r.created_at,
-        optimizedAt: r.optimized_at, stopCount: r.stop_count,
-      })));
+      res.json(buildRouteSummaries());
     } catch (err) { next(err); }
   });
 
@@ -109,14 +98,18 @@ export function createRoutesRouter(io: SocketServer): Router {
   router.post("/", async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const {
-        manifestId, startAddress, driverName = "Driver",
+        manifestId, startAddress, driverName = "Driver", routeNumber,
         vehicleId, clusterMeters = 50, alertMeters = 120,
       } = req.body as {
-        manifestId: string; startAddress: string; driverName?: string;
+        manifestId: string; startAddress: string; driverName?: string; routeNumber?: string;
         vehicleId?: string; clusterMeters?: number; alertMeters?: number;
       };
       if (!manifestId || !startAddress) {
         res.status(400).json({ error: "manifestId and startAddress are required." }); return;
+      }
+      const trimmedRouteNumber = routeNumber?.trim();
+      if (!trimmedRouteNumber) {
+        res.status(400).json({ error: "routeNumber is required." }); return;
       }
       const db = getDb();
       const manifest = queryOne(db.prepare(`SELECT id FROM manifests WHERE id = ?`), manifestId);
@@ -141,14 +134,170 @@ export function createRoutesRouter(io: SocketServer): Router {
       exec(
         db.prepare(`
           INSERT INTO routes
-            (id, manifest_id, driver_name, vehicle_id, status, start_address,
+            (id, manifest_id, route_number, driver_name, vehicle_id, status, start_address,
              start_lat, start_lng, cluster_meters, alert_meters, created_at)
-          VALUES (?, ?, ?, ?, 'loading', ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, 'loading', ?, ?, ?, ?, ?, ?)
         `),
-        routeId, manifestId, driverName, vehicleId ?? null, startAddress.trim(),
+        routeId, manifestId, trimmedRouteNumber, driverName, vehicleId ?? null, startAddress.trim(),
         startLat, startLng, clusterMeters, alertMeters, new Date().toISOString()
       );
       res.status(201).json(buildRouteDetail(routeId));
+    } catch (err) { next(err); }
+  });
+
+  // ── PATCH /api/routes/:id ─────────────────────────────────
+  router.patch("/:id", async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const routeId = String(req.params["id"]);
+      const { driverName, startAddress, manifestId } = req.body as {
+        driverName?: string;
+        startAddress?: string;
+        manifestId?: string;
+      };
+
+      const db = getDb();
+      const route = queryOne<RouteRow>(db.prepare(`SELECT * FROM routes WHERE id = ?`), routeId);
+      if (!route) { res.status(404).json({ error: "Route not found." }); return; }
+      if (route.status !== "loading") {
+        res.status(409).json({ error: "Session settings can only be changed while loading." }); return;
+      }
+
+      const updates: string[] = [];
+      const params: (string | number | null)[] = [];
+
+      if (driverName !== undefined) {
+        const trimmed = driverName.trim();
+        if (!trimmed) { res.status(400).json({ error: "driverName cannot be empty." }); return; }
+        updates.push("driver_name = ?");
+        params.push(trimmed);
+      }
+
+      if (startAddress !== undefined) {
+        const trimmed = startAddress.trim();
+        if (!trimmed) { res.status(400).json({ error: "startAddress cannot be empty." }); return; }
+        const { resolveAddressCoords } = await import("../services/geocoder.js");
+        let startLat: number | null = null;
+        let startLng: number | null = null;
+        try {
+          const coords = await resolveAddressCoords(trimmed);
+          startLat = coords.lat;
+          startLng = coords.lng;
+        } catch (err) {
+          console.warn("[route] Could not geocode depot on update:", err instanceof Error ? err.message : err);
+        }
+        updates.push("start_address = ?", "start_lat = ?", "start_lng = ?",
+          "return_drive_seconds = 0", "return_drive_miles = 0");
+        params.push(trimmed, startLat, startLng);
+      }
+
+      if (manifestId !== undefined && manifestId !== route.manifest_id) {
+        const manifest = queryOne(db.prepare(`SELECT id FROM manifests WHERE id = ?`), manifestId);
+        if (!manifest) { res.status(404).json({ error: "Manifest not found." }); return; }
+
+        exec(
+          db.prepare(`
+            UPDATE packages SET status = 'pending', scanned_at = NULL
+            WHERE manifest_id = ? AND status IN ('loaded', 'in_route')
+          `),
+          route.manifest_id
+        );
+        exec(db.prepare(`DELETE FROM route_stops WHERE route_id = ?`), routeId);
+        updates.push("manifest_id = ?", "optimized_at = NULL",
+          "return_drive_seconds = 0", "return_drive_miles = 0");
+        params.push(manifestId);
+      }
+
+      if (updates.length === 0) {
+        res.json(buildRouteDetail(routeId));
+        return;
+      }
+
+      exec(
+        db.prepare(`UPDATE routes SET ${updates.join(", ")} WHERE id = ?`),
+        ...params,
+        routeId
+      );
+      res.json(buildRouteDetail(routeId));
+    } catch (err) { next(err); }
+  });
+
+  // ── POST /api/routes/:id/unload ───────────────────────────
+  router.post("/:id/unload", (req: Request, res: Response, next: NextFunction): void => {
+    try {
+      const { packageId } = req.body as { packageId?: string };
+      if (!packageId) { res.status(400).json({ error: "packageId is required." }); return; }
+
+      const db = getDb();
+      const routeId = String(req.params["id"]);
+      const route = queryOne<RouteRow>(db.prepare(`SELECT * FROM routes WHERE id = ?`), routeId);
+      if (!route) { res.status(404).json({ error: "Route not found." }); return; }
+      if (route.status !== "loading") {
+        res.status(409).json({ error: "Packages can only be removed while loading." }); return;
+      }
+
+      const pkg = queryOne<PackageRow>(
+        db.prepare(`SELECT * FROM packages WHERE id = ? AND manifest_id = ?`),
+        packageId, route.manifest_id
+      );
+      if (!pkg) { res.status(404).json({ error: "Package not found on this manifest." }); return; }
+      if (!["loaded", "in_route"].includes(pkg.status)) {
+        res.status(409).json({ error: "Package is not loaded on this truck." }); return;
+      }
+
+      exec(
+        db.prepare(`UPDATE packages SET status = 'pending', scanned_at = NULL WHERE id = ?`),
+        packageId
+      );
+      exec(
+        db.prepare(`
+          DELETE FROM route_stop_packages
+          WHERE package_id = ? AND route_stop_id IN (SELECT id FROM route_stops WHERE route_id = ?)
+        `),
+        packageId, routeId
+      );
+
+      res.json({ success: true, packageId });
+    } catch (err) { next(err); }
+  });
+
+  // ── DELETE /api/routes/:id/packages/:packageId ────────────
+  router.delete("/:id/packages/:packageId", (req: Request, res: Response, next: NextFunction): void => {
+    try {
+      const db = getDb();
+      const routeId = String(req.params["id"]);
+      const packageId = String(req.params["packageId"]);
+      const route = queryOne<RouteRow>(db.prepare(`SELECT * FROM routes WHERE id = ?`), routeId);
+      if (!route) { res.status(404).json({ error: "Route not found." }); return; }
+      if (route.status !== "loading") {
+        res.status(409).json({ error: "Packages can only be removed while loading." }); return;
+      }
+
+      const pkg = queryOne<PackageRow>(
+        db.prepare(`SELECT * FROM packages WHERE id = ? AND manifest_id = ?`),
+        packageId, route.manifest_id
+      );
+      if (!pkg) { res.status(404).json({ error: "Package not found on this manifest." }); return; }
+
+      if (pkg.is_ghost === 1) {
+        exec(db.prepare(`DELETE FROM packages WHERE id = ?`), packageId);
+      } else if (["loaded", "in_route"].includes(pkg.status)) {
+        exec(
+          db.prepare(`UPDATE packages SET status = 'pending', scanned_at = NULL WHERE id = ?`),
+          packageId
+        );
+      } else {
+        res.status(409).json({ error: "Only loaded or ghost packages can be removed from the truck." }); return;
+      }
+
+      exec(
+        db.prepare(`
+          DELETE FROM route_stop_packages
+          WHERE package_id = ? AND route_stop_id IN (SELECT id FROM route_stops WHERE route_id = ?)
+        `),
+        packageId, routeId
+      );
+
+      res.json({ success: true, packageId });
     } catch (err) { next(err); }
   });
 
@@ -273,6 +422,8 @@ export function createRoutesRouter(io: SocketServer): Router {
         startLng: route.start_lng,
         clusterMeters: route.cluster_meters,
         alertMeters: route.alert_meters,
+        returnDriveSeconds: 0,
+        returnDriveMiles: 0,
         createdAt: route.created_at,
         optimizedAt: route.optimized_at,
         completedAt: route.completed_at,
@@ -395,7 +546,17 @@ export function createRoutesRouter(io: SocketServer): Router {
           }
         }
 
-        exec(db.prepare(`UPDATE routes SET status = 'optimized', optimized_at = ? WHERE id = ?`), now, route.id);
+        const returnSeconds = plan.returnLeg
+          ? Math.round(plan.returnLeg.durationSeconds)
+          : 0;
+        const returnMiles = plan.returnLeg
+          ? Math.round((plan.returnLeg.distanceMeters / 1609.344) * 100) / 100
+          : 0;
+
+        exec(
+          db.prepare(`UPDATE routes SET status = 'optimized', optimized_at = ?, return_drive_seconds = ?, return_drive_miles = ? WHERE id = ?`),
+          now, returnSeconds, returnMiles, route.id
+        );
         res.json(buildRouteDetail(route.id));
       } catch (err) { next(err); }
     }
