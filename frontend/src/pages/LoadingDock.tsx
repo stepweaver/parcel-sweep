@@ -109,21 +109,14 @@ export function LoadingDock() {
 
       {isLoading && (
         <div className="card" style={{ marginBottom: "1.5rem" }}>
-          <div style={{ fontWeight: 700, marginBottom: ".75rem", fontSize: "1rem" }}>Scanner</div>
+          <div style={{ fontWeight: 700, marginBottom: ".75rem" }} className="panel-title">Scanner</div>
           <ScannerInput onScan={handleScan} disabled={scanning} />
           {scanHistory.length > 0 && (
             <div style={{ maxHeight: 180, overflowY: "auto" }}>
               {scanHistory.map((r, i) => (
                 <div
                   key={i}
-                  style={{
-                    padding: ".4rem .6rem",
-                    borderRadius: 6,
-                    marginBottom: ".3rem",
-                    background: r.isGhost ? "#fffbeb" : "#f0fdf4",
-                    borderLeft: `4px solid ${r.isGhost ? "#f59e0b" : "#16a34a"}`,
-                    fontSize: ".88rem",
-                  }}
+                  className={r.isGhost ? "scan-result scan-result--warn" : "scan-result scan-result--ok"}
                 >
                   {r.isGhost ? "⚠ " : "✓ "}{r.message}
                 </div>
@@ -136,7 +129,7 @@ export function LoadingDock() {
       <div className="grid-2">
         {/* Left — manifest packages to scan */}
         <div className="card">
-          <h2 style={{ fontSize: "1rem", fontWeight: 700, marginBottom: "1rem" }}>
+          <h2 className="panel-title" style={{ marginBottom: "1rem" }}>
             Manifest ({pendingPackages.length} remaining)
           </h2>
           <PackageList
@@ -150,7 +143,7 @@ export function LoadingDock() {
         {/* Right — scanned packages */}
         <div>
           <div className="card" style={{ marginBottom: "1rem" }}>
-            <h2 style={{ fontSize: "1rem", fontWeight: 700, marginBottom: "1rem" }}>
+            <h2 className="panel-title" style={{ marginBottom: "1rem" }}>
               Loaded ({loadedPackages.length} packages)
             </h2>
             <PackageList packages={loadedPackages} emptyMessage="Scan packages to add them here." />

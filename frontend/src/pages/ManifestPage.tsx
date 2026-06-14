@@ -73,7 +73,7 @@ export function ManifestPage() {
         </div>
 
         <div className="card" style={{ maxWidth: 480 }}>
-          <h2 style={{ marginBottom: "1rem", fontSize: "1.1rem" }}>
+          <h2 className="panel-title" style={{ marginBottom: "1rem" }}>
             Fetch real addresses from OpenStreetMap
           </h2>
 
@@ -106,7 +106,7 @@ export function ManifestPage() {
             {generating ? <><span className="spinner" /> Fetching from OSM…</> : "Generate Manifest"}
           </button>
 
-          <div style={{ marginTop: "1rem", color: "#6b7280", fontSize: ".82rem" }}>
+          <div className="text-muted" style={{ marginTop: "1rem", fontSize: ".82rem" }}>
             Uses the free Overpass / OpenStreetMap API. Generation may take 5–15 seconds.
           </div>
         </div>
@@ -142,7 +142,7 @@ export function ManifestPage() {
 
       {/* Start Route form */}
       <div className="card" style={{ marginBottom: "1.5rem" }}>
-        <h2 style={{ fontSize: "1rem", fontWeight: 700, marginBottom: "1rem" }}>Start a Loading Session</h2>
+        <h2 className="panel-title" style={{ marginBottom: "1rem" }}>Start a Loading Session</h2>
         <div className="grid-2">
           <label>
             <div style={{ fontWeight: 600, marginBottom: ".25rem", fontSize: ".9rem" }}>Start Address (Station / Depot)</div>
@@ -164,7 +164,7 @@ export function ManifestPage() {
       </div>
 
       <div className="card">
-        <h2 style={{ fontSize: "1rem", fontWeight: 700, marginBottom: "1rem" }}>All Packages</h2>
+        <h2 className="panel-title" style={{ marginBottom: "1rem" }}>All Packages</h2>
         <PackageList packages={packages} />
       </div>
     </div>

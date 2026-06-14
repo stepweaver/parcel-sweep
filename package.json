@@ -10,6 +10,7 @@
     "dev": "concurrently -n backend,frontend -c cyan,magenta \"npm run dev -w backend\" \"npm run dev -w frontend\"",
     "build": "npm run build -w backend && npm run build -w frontend",
     "start": "npm run start -w backend",
+    "start:prod": "npm run build && npm run start",
     "typecheck": "npm run typecheck -w backend"
   },
   "devDependencies": {

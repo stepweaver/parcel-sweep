@@ -7,41 +7,25 @@ import { DriverView } from "./pages/DriverView";
 
 function Nav() {
   return (
-    <nav style={{
-      background: "#004b87",
-      color: "#fff",
-      padding: ".6rem 1.5rem",
-      display: "flex",
-      alignItems: "center",
-      gap: "1.5rem",
-      boxShadow: "0 2px 8px rgba(0,0,0,.25)",
-    }}>
-      <span style={{ fontWeight: 800, fontSize: "1.1rem", letterSpacing: ".02em" }}>
-        📦 Parcel Sweep
-      </span>
-      <NavLink
-        to="/"
-        end
-        style={({ isActive }) => ({
-          color: isActive ? "#fff" : "#90caf9",
-          fontWeight: isActive ? 700 : 400,
-          fontSize: ".9rem",
-          textDecoration: "none",
-        })}
-      >
-        Dashboard
-      </NavLink>
-      <NavLink
-        to="/manifests/new"
-        style={({ isActive }) => ({
-          color: isActive ? "#fff" : "#90caf9",
-          fontWeight: isActive ? 700 : 400,
-          fontSize: ".9rem",
-          textDecoration: "none",
-        })}
-      >
-        + Generate Manifest
-      </NavLink>
+    <nav className="app-nav">
+      <div className="app-nav-inner">
+        <span className="app-nav-brand">📦 Parcel Sweep</span>
+        <div className="app-nav-links">
+          <NavLink
+            to="/"
+            end
+            className={({ isActive }) => (isActive ? "app-nav-link active" : "app-nav-link")}
+          >
+            Dashboard
+          </NavLink>
+          <NavLink
+            to="/manifests/new"
+            className={({ isActive }) => (isActive ? "app-nav-link active" : "app-nav-link")}
+          >
+            + Generate Manifest
+          </NavLink>
+        </div>
+      </div>
     </nav>
   );
 }

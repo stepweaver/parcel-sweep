@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: parcel-sweep
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DB_PATH
+        value: /data/parcel-sweep.db
+      - key: GOOGLE_GEOCODING_API_KEY
+        sync: false
+      - key: FRONTEND_ORIGIN
+        sync: false
+    disk:
+      name: parcel-sweep-data
+      mountPath: /data
+      sizeGB: 1

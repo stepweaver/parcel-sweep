@@ -1,9 +1,14 @@
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import fs from "node:fs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.resolve(__dirname, "../../../parcel-sweep.db");
+const defaultDbPath = path.resolve(__dirname, "../../../parcel-sweep.db");
+const DB_PATH = process.env.DB_PATH ?? defaultDbPath;
+
+// Ensure parent directory exists (e.g. /data volume on Railway)
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
 let _db: DatabaseSync | null = null;
 

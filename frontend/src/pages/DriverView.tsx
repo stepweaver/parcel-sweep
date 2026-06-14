@@ -287,7 +287,7 @@ export function DriverView() {
 
   return (
     // position:fixed + inset:0 = immune to browser chrome/address bar changes
-    <div style={{ position: "fixed", inset: 0, display: "flex", flexDirection: "column", overflow: "hidden", background: "#000", touchAction: "none" }}>
+    <div className="driver-shell" style={{ position: "fixed", inset: 0, display: "flex", flexDirection: "column", overflow: "hidden", background: "#000", touchAction: "none" }}>
 
       {/* ── Route complete overlay ──────────────────────────────────── */}
       {routeComplete && (

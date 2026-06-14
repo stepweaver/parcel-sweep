@@ -30,7 +30,7 @@ export function Dashboard() {
       <div className="page-header">
         <div>
           <div className="page-title">Parcel Sweep</div>
-          <div style={{ color: "#6b7280", fontSize: ".9rem" }}>Delivery Route Optimizer</div>
+          <div className="page-subtitle">Delivery Route Optimizer</div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: ".75rem" }}>
           <Link to="/manifests/new">
@@ -65,11 +65,11 @@ export function Dashboard() {
             {/* Manifests panel */}
             <div className="card">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-                <h2 style={{ fontSize: "1.1rem", fontWeight: 700 }}>Manifests</h2>
+                <h2 className="panel-title">Manifests</h2>
                 <Link to="/manifests/new" style={{ fontSize: ".85rem" }}>+ New</Link>
               </div>
               {manifests.length === 0 ? (
-                <div style={{ color: "#9ca3af", textAlign: "center", padding: "1.5rem" }}>
+                <div className="text-meta" style={{ textAlign: "center", padding: "1.5rem" }}>
                   No manifests yet.<br />
                   <Link to="/manifests/new">Generate one to get started.</Link>
                 </div>
@@ -79,7 +79,7 @@ export function Dashboard() {
                     <Link
                       key={m.id}
                       to={`/manifests/${m.id}`}
-                      style={{ display: "flex", justifyContent: "space-between", padding: ".6rem .2rem", borderBottom: "1px solid var(--border)", color: "inherit", textDecoration: "none" }}
+                      className="list-row"
                     >
                       <div>
                         <strong>ZIP {m.zipCode}</strong>
@@ -99,10 +99,10 @@ export function Dashboard() {
             {/* Routes panel */}
             <div className="card">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-                <h2 style={{ fontSize: "1.1rem", fontWeight: 700 }}>Routes</h2>
+                <h2 className="panel-title">Routes</h2>
               </div>
               {routes.length === 0 ? (
-                <div style={{ color: "#9ca3af", textAlign: "center", padding: "1.5rem" }}>
+                <div className="text-meta" style={{ textAlign: "center", padding: "1.5rem" }}>
                   No routes yet.<br />Generate a manifest and start loading.
                 </div>
               ) : (
@@ -111,7 +111,7 @@ export function Dashboard() {
                     <Link
                       key={r.id}
                       to={r.status === "in_delivery" || r.status === "optimized" ? `/routes/${r.id}/drive` : `/routes/${r.id}/load`}
-                      style={{ display: "flex", justifyContent: "space-between", padding: ".6rem .2rem", borderBottom: "1px solid var(--border)", color: "inherit", textDecoration: "none" }}
+                      className="list-row"
                     >
                       <div>
                         <strong>{r.driverName}</strong>

@@ -1,0 +1,15 @@
+node_modules
+backend/dist
+frontend/dist
+.git
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.db
+*.db-shm
+*.db-wal
+.cursor
+.vscode
+.idea
+**/*.log
