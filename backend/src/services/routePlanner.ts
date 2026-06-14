@@ -1,5 +1,8 @@
-import { clusterStops } from "./clusterer.js";
-import { buildDurationMatrix, fetchLegMetrics } from "./matrixBuilder.js";
+import { clusterStopsWithLimit } from "./clusterer.js";
+import {
+  buildDurationMatrixWithFallback,
+  fetchLegMetricsWithFallback,
+} from "./matrixBuilder.js";
 import { optimizeRoute } from "./routeOptimizer.js";
 import { generateAlerts } from "./alertGenerator.js";
 import {
@@ -12,6 +15,7 @@ import {
 } from "../types/index.js";
 
 const METERS_PER_MILE = 1609.344;
+const LEG_FETCH_BATCH = 8;
 
 export interface PlannedStop {
   sequenceNumber: number;
@@ -28,6 +32,24 @@ export interface RoutePlanResult {
   depot: LatLng;
   stops: PlannedStop[];
   returnLeg: LegMetrics | null;
+  effectiveClusterMeters: number;
+  matrixSource: "osrm" | "haversine";
+}
+
+async function mapInBatches<T, R>(
+  items: T[],
+  batchSize: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    const batchResults = await Promise.all(
+      batch.map((item, offset) => fn(item, i + offset))
+    );
+    results.push(...batchResults);
+  }
+  return results;
 }
 
 function packagesToGeocodedStops(packages: PackageRow[]): GeocodedStop[] {
@@ -88,16 +110,25 @@ export async function planRouteFromPackages(
   const osrmBaseUrl = process.env.OSRM_BASE_URL ?? "http://router.project-osrm.org";
   const depot = await resolveDepot(route);
   const geocodedStops = packagesToGeocodedStops(valid);
-  const clusters = clusterStops(geocodedStops, route.cluster_meters);
-  const durationMatrix = await buildDurationMatrix(depot, clusters, osrmBaseUrl);
-  const orderedIndices = optimizeRoute(durationMatrix);
+  const { clusters, effectiveClusterMeters } = clusterStopsWithLimit(
+    geocodedStops,
+    route.cluster_meters
+  );
+  const { matrix, source: matrixSource } = await buildDurationMatrixWithFallback(
+    depot,
+    clusters,
+    osrmBaseUrl
+  );
+  const orderedIndices = optimizeRoute(matrix);
   const orderedClusters = orderedIndices.map((i) => clusters[i]);
 
-  const legMetrics = await Promise.all(
-    orderedClusters.map(async (cluster, stepIdx) => {
+  const legMetrics = await mapInBatches(
+    orderedClusters,
+    LEG_FETCH_BATCH,
+    async (cluster, stepIdx) => {
       const from = stepIdx === 0 ? depot : orderedClusters[stepIdx - 1].centroid;
-      return fetchLegMetrics(from, cluster.centroid, osrmBaseUrl);
-    })
+      return fetchLegMetricsWithFallback(from, cluster.centroid, osrmBaseUrl);
+    }
   );
 
   const alertsPerCluster = generateAlerts(orderedClusters, route.alert_meters);
@@ -120,8 +151,8 @@ export async function planRouteFromPackages(
 
   const lastCluster = orderedClusters[orderedClusters.length - 1];
   const returnLeg = lastCluster
-    ? await fetchLegMetrics(lastCluster.centroid, depot, osrmBaseUrl)
+    ? await fetchLegMetricsWithFallback(lastCluster.centroid, depot, osrmBaseUrl)
     : null;
 
-  return { depot, stops, returnLeg };
+  return { depot, stops, returnLeg, effectiveClusterMeters, matrixSource };
 }

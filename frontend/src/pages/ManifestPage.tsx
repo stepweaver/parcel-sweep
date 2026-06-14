@@ -346,6 +346,11 @@ export function ManifestPage() {
               {planResult.settings.driverCount} driver{planResult.settings.driverCount === 1 ? "" : "s"} ·{" "}
               depot {planResult.start.address}
             </div>
+            {planResult.settings.effectiveClusterMeters > planResult.settings.clusterMeters && (
+              <div className="text-muted" style={{ fontSize: ".82rem", marginTop: ".35rem" }}>
+                Cluster radius auto-raised to {planResult.settings.effectiveClusterMeters}m for large manifest.
+              </div>
+            )}
           </div>
           <div className="proposal-grid">
             {planResult.proposals.map((proposal, idx) => {
@@ -354,6 +359,8 @@ export function ManifestPage() {
                 <RouteProposalCard
                   key={proposal.proposalId}
                   proposal={proposal}
+                  depot={planResult.start}
+                  clusterMeters={planResult.settings.effectiveClusterMeters}
                   index={idx}
                   total={planResult.proposals.length}
                   driverName={form.driverName}

@@ -72,3 +72,39 @@ export function clusterStops(
     totalPackages: c.stops.reduce((sum, s) => sum + s.packageCount, 0),
   }));
 }
+
+/** OSRM public table service accepts at most ~100 coordinates per request. */
+export const MAX_ROUTE_CLUSTERS = 90;
+
+/**
+ * Cluster stops, automatically widening the radius until the cluster count
+ * fits within OSRM (or caller) limits.
+ */
+export function clusterStopsWithLimit(
+  stops: GeocodedStop[],
+  clusterMeters: number,
+  maxClusters: number = MAX_ROUTE_CLUSTERS
+): { clusters: Cluster[]; effectiveClusterMeters: number } {
+  let effective = clusterMeters;
+  let clusters = clusterStops(stops, effective);
+
+  while (clusters.length > maxClusters && effective < 8000) {
+    effective = Math.min(Math.ceil(effective * 1.5), 8000);
+    clusters = clusterStops(stops, effective);
+  }
+
+  if (clusters.length > maxClusters) {
+    throw new Error(
+      `Manifest has too many distinct stops (${clusters.length}) to optimize at once. ` +
+        "Try fewer packages or split across more drivers."
+    );
+  }
+
+  if (effective > clusterMeters) {
+    console.log(
+      `[route] Raised cluster radius ${clusterMeters}m → ${effective}m (${clusters.length} clusters)`
+    );
+  }
+
+  return { clusters, effectiveClusterMeters: effective };
+}

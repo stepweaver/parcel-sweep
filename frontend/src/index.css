@@ -502,6 +502,11 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   width: 100%;
 }
 
+.proposal-route-map {
+  border: 1px solid var(--border);
+  margin-top: .5rem;
+}
+
 /* ── Package list (mobile-friendly cards) ─────────────────────────────────── */
 
 .package-list {

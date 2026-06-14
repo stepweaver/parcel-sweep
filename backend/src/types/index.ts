@@ -194,6 +194,7 @@ export interface RouteProposalStop {
   driveMilesFromPrev: number;
   alerts: string[];
   packageIds: string[];
+  geometry: [number, number][] | null;
 }
 
 export interface RouteProposal {
@@ -205,6 +206,7 @@ export interface RouteProposal {
   estimatedDriveMiles: number;
   returnDriveSeconds: number;
   returnDriveMiles: number;
+  returnGeometry: [number, number][] | null;
   stops: RouteProposalStop[];
   packageIds: string[];
 }
@@ -213,6 +215,8 @@ export interface ProposeRoutesResponse {
   start: { address: string; lat: number; lng: number };
   settings: {
     clusterMeters: number;
+    effectiveClusterMeters: number;
+    matrixSource: "osrm" | "haversine";
     alertMeters: number;
     driverCount: number;
     maxPackagesPerRoute: number;

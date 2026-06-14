@@ -1,7 +1,10 @@
 import type { RouteProposal } from "../api";
+import { ProposalRouteMap } from "./ProposalRouteMap";
 
 interface RouteProposalCardProps {
   proposal: RouteProposal;
+  depot: { lat: number; lng: number; address: string };
+  clusterMeters?: number;
   index: number;
   total: number;
   driverName: string;
@@ -22,6 +25,8 @@ function formatDuration(seconds: number): string {
 
 export function RouteProposalCard({
   proposal,
+  depot,
+  clusterMeters,
   index,
   total,
   driverName,
@@ -55,10 +60,19 @@ export function RouteProposalCard({
         <div><strong>{totalMiles}</strong> mi</div>
       </div>
 
+      <details className="proposal-card__details" open>
+        <summary>Route path</summary>
+        <ProposalRouteMap
+          depot={depot}
+          proposal={proposal}
+          clusterMeters={clusterMeters}
+        />
+      </details>
+
       <details className="proposal-card__details">
-        <summary>Stop preview ({proposal.stops.length})</summary>
+        <summary>Stop list ({proposal.stops.length})</summary>
         <ol className="proposal-card__stops">
-          {proposal.stops.slice(0, 8).map((stop) => (
+          {proposal.stops.map((stop) => (
             <li key={stop.sequenceNumber}>
               #{stop.sequenceNumber} · {stop.packageIds.length} pkg
               {stop.driveMilesFromPrev > 0 && (
@@ -66,9 +80,6 @@ export function RouteProposalCard({
               )}
             </li>
           ))}
-          {proposal.stops.length > 8 && (
-            <li className="text-meta">…and {proposal.stops.length - 8} more stops</li>
-          )}
         </ol>
       </details>
 

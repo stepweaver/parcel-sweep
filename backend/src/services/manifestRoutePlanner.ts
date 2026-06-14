@@ -1,4 +1,4 @@
-import { fetchLegMetrics } from "./matrixBuilder.js";
+import { fetchLegMetricsWithFallback } from "./matrixBuilder.js";
 import { planRouteFromPackages, PlannedStop } from "./routePlanner.js";
 import { PackageRow, RouteRow, LatLng, RouteProposal, RouteProposalStop } from "../types/index.js";
 
@@ -94,15 +94,28 @@ function splitStopsIntoChunks(
   return chunks;
 }
 
-function resequenceStops(stops: PlannedStop[]): RouteProposalStop[] {
-  return stops.map((stop, idx) => ({
-    sequenceNumber: idx + 1,
+async function buildChunkStops(
+  stops: PlannedStop[],
+  depot: LatLng,
+  osrmBaseUrl: string
+): Promise<RouteProposalStop[]> {
+  const metrics = await Promise.all(
+    stops.map((stop, i) => {
+      const from = i === 0 ? depot : stops[i - 1].centroid;
+      return fetchLegMetricsWithFallback(from, stop.centroid, osrmBaseUrl);
+    })
+  );
+
+  return stops.map((stop, i) => ({
+    sequenceNumber: i + 1,
     clusterId: stop.clusterId,
     centroid: stop.centroid,
-    driveSecondsFromPrev: stop.driveSecondsFromPrev,
-    driveMilesFromPrev: stop.driveMilesFromPrev,
+    driveSecondsFromPrev: Math.round(metrics[i].durationSeconds),
+    driveMilesFromPrev:
+      Math.round((metrics[i].distanceMeters / METERS_PER_MILE) * 100) / 100,
     alerts: stop.alerts,
     packageIds: stop.packageIds,
+    geometry: metrics[i].geometry ?? null,
   }));
 }
 
@@ -112,31 +125,35 @@ async function buildProposal(
   depot: LatLng,
   osrmBaseUrl: string
 ): Promise<RouteProposal> {
-  const packageIds = stops.flatMap((s) => s.packageIds);
-  const driveSeconds = stops.reduce((sum, s) => sum + s.driveSecondsFromPrev, 0);
-  const driveMiles = stops.reduce((sum, s) => sum + s.driveMilesFromPrev, 0);
+  const chunkStops = await buildChunkStops(stops, depot, osrmBaseUrl);
+  const packageIds = chunkStops.flatMap((s) => s.packageIds);
+  const driveSeconds = chunkStops.reduce((sum, s) => sum + s.driveSecondsFromPrev, 0);
+  const driveMiles = chunkStops.reduce((sum, s) => sum + s.driveMilesFromPrev, 0);
 
-  const lastStop = stops[stops.length - 1];
+  const lastStop = chunkStops[chunkStops.length - 1];
   let returnDriveSeconds = 0;
   let returnDriveMiles = 0;
+  let returnGeometry: [number, number][] | null = null;
 
   if (lastStop) {
-    const returnLeg = await fetchLegMetrics(lastStop.centroid, depot, osrmBaseUrl);
+    const returnLeg = await fetchLegMetricsWithFallback(lastStop.centroid, depot, osrmBaseUrl);
     returnDriveSeconds = Math.round(returnLeg.durationSeconds);
     returnDriveMiles =
       Math.round((returnLeg.distanceMeters / METERS_PER_MILE) * 100) / 100;
+    returnGeometry = returnLeg.geometry ?? null;
   }
 
   return {
     proposalId: `proposal_${index + 1}`,
     label: `Driver ${index + 1}`,
-    stopCount: stops.length,
+    stopCount: chunkStops.length,
     packageCount: packageIds.length,
     estimatedDriveSeconds: driveSeconds,
     estimatedDriveMiles: Math.round(driveMiles * 100) / 100,
     returnDriveSeconds,
     returnDriveMiles,
-    stops: resequenceStops(stops),
+    returnGeometry,
+    stops: chunkStops,
     packageIds,
   };
 }
@@ -149,6 +166,8 @@ export async function proposeRoutesForManifest(
   start: { address: string; lat: number; lng: number };
   settings: {
     clusterMeters: number;
+    effectiveClusterMeters: number;
+    matrixSource: "osrm" | "haversine";
     alertMeters: number;
     driverCount: number;
     maxPackagesPerRoute: number;
@@ -209,6 +228,8 @@ export async function proposeRoutesForManifest(
     },
     settings: {
       clusterMeters: syntheticRoute.cluster_meters,
+      effectiveClusterMeters: plan.effectiveClusterMeters,
+      matrixSource: plan.matrixSource,
       alertMeters: syntheticRoute.alert_meters,
       driverCount,
       maxPackagesPerRoute: maxPackages,
