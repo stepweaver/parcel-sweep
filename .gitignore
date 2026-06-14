@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+frontend/dist/
+
+# Environment files (never commit real keys)
+.env
+backend/.env
+
+# SQLite database (generated at runtime)
+*.db
+*.db-shm
+*.db-wal
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Source maps (optional — keep if you want source-mapped stack traces in prod)
+*.js.map
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.cursor/
+
+# Logs
+*.log
+npm-debug.log*

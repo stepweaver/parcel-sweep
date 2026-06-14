@@ -1,0 +1,115 @@
+@import "leaflet/dist/leaflet.css";
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { height: 100%; }
+body {
+  min-height: 100%;
+  /* Prevent rubber-band on iOS when the driver view is open.
+     position:fixed inset:0 on the driver shell does the real locking. */
+  overscroll-behavior: none;
+}
+
+:root {
+  --usps-blue: #004b87;
+  --usps-red: #da291c;
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --border: #d1d5db;
+  --text: #111827;
+  --text-muted: #6b7280;
+  --radius: 8px;
+  --shadow: 0 1px 4px rgba(0,0,0,.12);
+}
+
+body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); }
+
+a { color: var(--usps-blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+button {
+  cursor: pointer;
+  border: none;
+  border-radius: var(--radius);
+  padding: .5rem 1.1rem;
+  font-size: .95rem;
+  font-weight: 600;
+  transition: opacity .15s, transform .1s;
+}
+button:active { transform: scale(.97); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+
+.btn-primary { background: var(--usps-blue); color: #fff; }
+.btn-primary:hover:not(:disabled) { background: #003870; }
+.btn-danger { background: var(--usps-red); color: #fff; }
+.btn-danger:hover:not(:disabled) { background: #b3221a; }
+.btn-success { background: #16a34a; color: #fff; }
+.btn-success:hover:not(:disabled) { background: #14532d; }
+.btn-ghost { background: transparent; border: 1.5px solid var(--border); color: var(--text); }
+.btn-ghost:hover:not(:disabled) { background: var(--bg); }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1.25rem;
+}
+
+.badge {
+  display: inline-block;
+  padding: .2rem .55rem;
+  border-radius: 999px;
+  font-size: .75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.badge-pending  { background: #f3f4f6; color: #374151; }
+.badge-loaded   { background: #dbeafe; color: #1d4ed8; }
+.badge-in_route { background: #fef3c7; color: #92400e; }
+.badge-delivered{ background: #dcfce7; color: #166534; }
+.badge-ghost    { background: #fef9c3; color: #854d0e; border: 1px solid #fde047; }
+
+.page { max-width: 1200px; margin: 0 auto; padding: 1.5rem; }
+.page-header { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
+.page-title { font-size: 1.6rem; font-weight: 700; color: var(--usps-blue); }
+
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+@media (max-width: 700px) {
+  .grid-2, .grid-3 { grid-template-columns: 1fr; }
+}
+
+.stat-card { text-align: center; }
+.stat-card .stat-value { font-size: 2.2rem; font-weight: 800; color: var(--usps-blue); }
+.stat-card .stat-label { font-size: .8rem; color: var(--text-muted); text-transform: uppercase; }
+
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+th { background: #f9fafb; text-align: left; padding: .6rem .9rem; font-weight: 600; border-bottom: 2px solid var(--border); }
+td { padding: .55rem .9rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+tr:hover td { background: #f9fafb; }
+
+.alert-row { background: #fffbeb !important; }
+
+input[type="text"], input[type="number"], select {
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: .45rem .75rem;
+  font-size: .95rem;
+  width: 100%;
+  outline: none;
+}
+input:focus, select:focus { border-color: var(--usps-blue); }
+
+.spinner {
+  display: inline-block;
+  width: 1.2em; height: 1.2em;
+  border: 3px solid var(--border);
+  border-top-color: var(--usps-blue);
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+  vertical-align: middle;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
