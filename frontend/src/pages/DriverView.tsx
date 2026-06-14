@@ -18,6 +18,17 @@ function haversine(a: { lat: number; lng: number }, b: { lat: number; lng: numbe
   return 2 * EARTH_R * Math.asin(Math.sqrt(h));
 }
 
+function compassBearing(from: { lat: number; lng: number }, to: { lat: number; lng: number }): number {
+  const toR = (d: number) => (d * Math.PI) / 180;
+  const toD = (r: number) => (r * 180) / Math.PI;
+  const dLng = toR(to.lng - from.lng);
+  const lat1 = toR(from.lat);
+  const lat2 = toR(to.lat);
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+  return (toD(Math.atan2(y, x)) + 360) % 360;
+}
+
 // ── Predictive alert thresholds ───────────────────────────────────────────
 const ZONE_ARRIVING = 40;   // m  → full-screen flash, siren
 const ZONE_ALERT    = 120;  // m  → urgent top banner, triple beep
@@ -82,6 +93,9 @@ export function DriverView() {
   const [routeComplete, setRouteComplete] = useState(false);
 
   const [driverPos, setDriverPos] = useState<{ lat: number; lng: number } | null>(null);
+  const [driverHeading, setDriverHeading] = useState<number | null>(null);
+  const prevPosRef = useRef<{ lat: number; lng: number } | null>(null);
+  const lastHeadingRef = useRef<number | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
   const [activeAlert, setActiveAlert] = useState<ActiveAlert | null>(null);
 
@@ -185,15 +199,36 @@ export function DriverView() {
   }, [fireAlert]);
 
   // ── Unified GPS handler ────────────────────────────────────────────────
-  const handleGps = useCallback((pos: { lat: number; lng: number }, r: RouteDetail | null, currIdx: number) => {
+  const handleGps = useCallback((
+    pos: { lat: number; lng: number },
+    gpsHeading: number | undefined,
+    r: RouteDetail | null,
+    currIdx: number,
+  ) => {
     setDriverPos(pos);
     if (r) checkProximity(pos, r, currIdx);
 
-    // Throttled server ping
+    let heading = gpsHeading;
+    if (heading == null && prevPosRef.current) {
+      const moved = haversine(prevPosRef.current, pos);
+      if (moved > 3) {
+        heading = compassBearing(prevPosRef.current, pos);
+      }
+    }
+    if (heading != null && Number.isFinite(heading)) {
+      lastHeadingRef.current = heading;
+      setDriverHeading(heading);
+    }
+    prevPosRef.current = pos;
+
     const now = Date.now();
     if (id && now - lastPingRef.current > 5000) {
       lastPingRef.current = now;
-      void api.routes.gps(id, { lat: pos.lat, lng: pos.lng });
+      void api.routes.gps(id, {
+        lat: pos.lat,
+        lng: pos.lng,
+        heading: lastHeadingRef.current ?? undefined,
+      });
     }
   }, [id, checkProximity]);
 
@@ -226,7 +261,16 @@ export function DriverView() {
     let watchId: number | null = null;
     if (navigator.geolocation) {
       watchId = navigator.geolocation.watchPosition(
-        (pos) => handleGps({ lat: pos.coords.latitude, lng: pos.coords.longitude }, routeSnapshot, activeIdxSnapshot),
+        (pos) => {
+          const rawHeading = pos.coords.heading;
+          const heading = rawHeading != null && Number.isFinite(rawHeading) ? rawHeading : undefined;
+          handleGps(
+            { lat: pos.coords.latitude, lng: pos.coords.longitude },
+            heading,
+            routeSnapshot,
+            activeIdxSnapshot,
+          );
+        },
         () => { /* permission denied — user can use Demo Mode */ },
         { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 }
       );
@@ -260,7 +304,7 @@ export function DriverView() {
       elapsedSec += DEMO_TICK_MS / 1000;
       demoProgressRef.current = Math.min(elapsedSec / durationSec, 1);
       const pos = interpolatePath(allGeo, demoProgressRef.current);
-      handleGps(pos, route, localIdx);
+      handleGps(pos, undefined, route, localIdx);
       if (demoProgressRef.current >= 1) { clearInterval(demoRef.current!); demoRef.current = null; }
     }, DEMO_TICK_MS);
 
@@ -375,6 +419,7 @@ export function DriverView() {
         <DeliveryMap
           stops={route.stops}
           driverPosition={driverPos}
+          driverHeading={driverHeading}
           activeStopId={activeStop?.id}
           clusterMeters={route.clusterMeters}
           followDriver

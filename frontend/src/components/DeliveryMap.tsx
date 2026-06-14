@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
+import "leaflet-rotate";
 import type { RouteStopDetail } from "../api";
 
 // Fix Leaflet default icon paths broken by bundlers
@@ -13,6 +14,8 @@ L.Icon.Default.mergeOptions({
 interface DeliveryMapProps {
   stops: RouteStopDetail[];
   driverPosition?: { lat: number; lng: number } | null;
+  /** Compass heading in degrees (0 = north). Rotates the map in follow mode. */
+  driverHeading?: number | null;
   activeStopId?: string | null;
   clusterMeters?: number;
   /** When true, the map follows the driver instead of fitting all stops. */
@@ -41,6 +44,7 @@ const PULSE_STYLE = `
 export function DeliveryMap({
   stops,
   driverPosition,
+  driverHeading,
   activeStopId,
   clusterMeters = 50,
   followDriver = false,
@@ -51,6 +55,7 @@ export function DeliveryMap({
   const layersRef = useRef<L.LayerGroup | null>(null);
   const driverMarkerRef = useRef<L.Marker | null>(null);
   const followingRef = useRef(followDriver);
+  const lastHeadingRef = useRef<number | null>(null);
   followingRef.current = followDriver;
 
   // Initialise map once
@@ -61,6 +66,10 @@ export function DeliveryMap({
       attributionControl: false,
       dragging: !followDriver,
       scrollWheelZoom: !followDriver,
+      rotate: followDriver,
+      touchRotate: false,
+      rotateControl: false,
+      bearing: 0,
     });
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
@@ -148,7 +157,7 @@ export function DeliveryMap({
     }
   }, [stops, activeStopId, clusterMeters, followDriver]);
 
-  // Driver marker — pulsing green dot
+  // POV follow: rotate map to heading, center on driver, offset view forward
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -156,7 +165,21 @@ export function DeliveryMap({
     if (driverPosition) {
       const latlng: L.LatLngExpression = [driverPosition.lat, driverPosition.lng];
 
-      if (!driverMarkerRef.current) {
+      if (driverHeading != null && Number.isFinite(driverHeading)) {
+        lastHeadingRef.current = driverHeading;
+      }
+
+      if (followingRef.current) {
+        const heading = lastHeadingRef.current;
+        if (heading != null) {
+          map.setBearing(-heading);
+        }
+        map.setView(latlng, Math.max(map.getZoom(), 16), { animate: true, duration: 0.8 });
+        const offsetY = (containerRef.current?.clientHeight ?? 0) / 5;
+        if (offsetY > 0) {
+          map.panBy([0, -offsetY], { animate: false });
+        }
+      } else if (!driverMarkerRef.current) {
         const icon = L.divIcon({
           className: "",
           html: `<div style="
@@ -172,24 +195,55 @@ export function DeliveryMap({
       } else {
         driverMarkerRef.current.setLatLng(latlng);
       }
-
-      // Follow driver: pan map smoothly
-      if (followingRef.current) {
-        map.setView(latlng, Math.max(map.getZoom(), 16), { animate: true, duration: 0.8 });
-      }
     } else {
       driverMarkerRef.current?.remove();
       driverMarkerRef.current = null;
     }
-  }, [driverPosition]);
+  }, [driverPosition, driverHeading, followDriver]);
+
+  const showPovIndicator = followDriver && driverPosition;
 
   return (
     <>
       <style>{PULSE_STYLE}</style>
-      <div
-        ref={containerRef}
-        style={{ width: "100%", height: "100%", borderRadius: 0, ...style }}
-      />
+      <div style={{ position: "relative", width: "100%", height: "100%", ...style }}>
+        <div
+          ref={containerRef}
+          style={{ width: "100%", height: "100%", borderRadius: 0 }}
+        />
+        {showPovIndicator && (
+          <div
+            aria-hidden
+            style={{
+              position: "absolute",
+              left: "50%",
+              top: "70%",
+              transform: "translate(-50%, -50%)",
+              pointerEvents: "none",
+              zIndex: 1000,
+            }}
+          >
+            <div style={{
+              width: 0,
+              height: 0,
+              margin: "0 auto",
+              borderLeft: "11px solid transparent",
+              borderRight: "11px solid transparent",
+              borderBottom: "24px solid #16a34a",
+              filter: "drop-shadow(0 2px 4px rgba(0,0,0,.5))",
+            }} />
+            <div style={{
+              width: 14,
+              height: 14,
+              margin: "-4px auto 0",
+              borderRadius: "50%",
+              background: "#fff",
+              border: "3px solid #16a34a",
+              boxShadow: "0 2px 6px rgba(0,0,0,.35)",
+            }} />
+          </div>
+        )}
+      </div>
     </>
   );
 }
