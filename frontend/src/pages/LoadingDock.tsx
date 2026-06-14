@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { api, type PackageDetail, type RouteDetail } from "../api";
+import { api, type PackageDetail, type RouteDetail, type LoadOrderResponse } from "../api";
 import { ScannerInput } from "../components/ScannerInput";
 import { PackageList } from "../components/PackageList";
+import { LoadOrderList } from "../components/LoadOrderList";
 
 interface ScanResult {
   isGhost: boolean;
@@ -21,6 +22,9 @@ export function LoadingDock() {
   const [error, setError] = useState<string | null>(null);
   const [optimizing, setOptimizing] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [loadOrder, setLoadOrder] = useState<LoadOrderResponse | null>(null);
+  const [loadOrderLoading, setLoadOrderLoading] = useState(false);
+  const [loadOrderError, setLoadOrderError] = useState<string | null>(null);
 
   const loadRoute = async (routeId: string) => {
     const r = await api.routes.get(routeId);
@@ -29,9 +33,24 @@ export function LoadingDock() {
     setManifestPackages(packages);
   };
 
+  const fetchLoadOrder = async (routeId: string) => {
+    setLoadOrderLoading(true);
+    setLoadOrderError(null);
+    try {
+      const order = await api.routes.loadOrder(routeId);
+      setLoadOrder(order);
+    } catch (e) {
+      setLoadOrderError((e as Error).message);
+      setLoadOrder(null);
+    } finally {
+      setLoadOrderLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!id) return;
     loadRoute(id).catch((e: Error) => setError(e.message)).finally(() => setLoading(false));
+    void fetchLoadOrder(id);
   }, [id]);
 
   const handleScan = async (trackingNumber: string) => {
@@ -45,6 +64,7 @@ export function LoadingDock() {
         address: result.package.address,
       }, ...prev]);
       await loadRoute(id);
+      void fetchLoadOrder(id);
     } catch (e) {
       setScanHistory((prev) => [{
         isGhost: true,
@@ -140,8 +160,37 @@ export function LoadingDock() {
           />
         </div>
 
-        {/* Right — scanned packages */}
+        {/* Right — load order + scanned packages */}
         <div>
+          <div className="card" style={{ marginBottom: "1rem" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: ".75rem", gap: ".5rem", flexWrap: "wrap" }}>
+              <h2 className="panel-title" style={{ margin: 0 }}>
+                Truck Load Order
+              </h2>
+              <button
+                className="btn-ghost"
+                style={{ fontSize: ".8rem", padding: ".25rem .6rem" }}
+                disabled={loadOrderLoading}
+                onClick={() => id && void fetchLoadOrder(id)}
+              >
+                {loadOrderLoading ? "Updating…" : "Refresh"}
+              </button>
+            </div>
+            <div style={{ color: "#6b7280", fontSize: ".82rem", marginBottom: ".75rem" }}>
+              Load packages in this order — <strong>#1 goes deepest in the truck</strong>, last item is your first delivery.
+            </div>
+            {loadOrderError && (
+              <div style={{ color: "#92400e", fontSize: ".85rem", marginBottom: ".75rem" }}>
+                {loadOrderError}
+              </div>
+            )}
+            {loadOrderLoading && !loadOrder ? (
+              <span className="spinner" />
+            ) : loadOrder ? (
+              <LoadOrderList items={loadOrder.items} source={loadOrder.source} compact />
+            ) : null}
+          </div>
+
           <div className="card" style={{ marginBottom: "1rem" }}>
             <h2 className="panel-title" style={{ marginBottom: "1rem" }}>
               Loaded ({loadedPackages.length} packages)

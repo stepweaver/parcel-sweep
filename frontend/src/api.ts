@@ -73,6 +73,21 @@ export interface RouteSummary {
   stopCount: number;
 }
 
+export interface LoadOrderItem {
+  loadPosition: number;
+  deliverySequence: number;
+  stopId: string | null;
+  address: string;
+  packages: PackageDetail[];
+  loaded: boolean;
+}
+
+export interface LoadOrderResponse {
+  source: "optimized" | "preview";
+  totalStops: number;
+  items: LoadOrderItem[];
+}
+
 async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     headers: { "Content-Type": "application/json", ...options?.headers },
@@ -132,5 +147,9 @@ export const api = {
         `/api/routes/${routeId}/gps`,
         { method: "POST", body: JSON.stringify(data) }
       ),
+    loadOrder: (id: string) =>
+      apiFetch<LoadOrderResponse>(`/api/routes/${id}/load-order`),
+    exportUrl: (id: string, format: "gpx" | "kml" | "csv") =>
+      `/api/routes/${id}/export/${format}`,
   },
 };

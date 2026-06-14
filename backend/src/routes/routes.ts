@@ -3,11 +3,9 @@ import { v4 as uuidv4 } from "uuid";
 import { Server as SocketServer } from "socket.io";
 import { getDb } from "../db/index.js";
 import { queryAll, queryOne, exec } from "../db/helpers.js";
-import { clusterStops } from "../services/clusterer.js";
-import { buildDurationMatrix, fetchLegMetrics } from "../services/matrixBuilder.js";
-import { optimizeRoute } from "../services/routeOptimizer.js";
-import { generateAlerts } from "../services/alertGenerator.js";
 import { haversineMeters } from "../services/clusterer.js";
+import { planRouteFromPackages, resolveDepot } from "../services/routePlanner.js";
+import { buildGpx, buildKml, buildCsv } from "../services/routeExporter.js";
 import {
   PackageRow,
   RouteRow,
@@ -15,10 +13,10 @@ import {
   RouteDetail,
   RouteStopDetail,
   PackageDetail,
-  GeocodedStop,
+  LoadOrderResponse,
+  LoadOrderItem,
 } from "../types/index.js";
 
-const METERS_PER_MILE = 1609.344;
 
 export function createRoutesRouter(io: SocketServer): Router {
   const router = Router();
@@ -198,6 +196,129 @@ export function createRoutesRouter(io: SocketServer): Router {
     } catch (err) { next(err); }
   });
 
+  function buildLoadOrderFromDetail(detail: RouteDetail, source: "optimized" | "preview"): LoadOrderResponse {
+    const totalStops = detail.stops.length;
+    const items: LoadOrderItem[] = [...detail.stops]
+      .sort((a, b) => b.sequenceNumber - a.sequenceNumber)
+      .map((stop, idx) => ({
+        loadPosition: idx + 1,
+        deliverySequence: stop.sequenceNumber,
+        stopId: stop.id,
+        address: stop.packages[0]?.address ?? "Unknown address",
+        packages: stop.packages,
+        loaded: stop.packages.every((p) => ["loaded", "in_route", "delivered"].includes(p.status)),
+      }));
+    return { source, totalStops, items };
+  }
+
+  async function buildLoadOrderPreview(route: RouteRow): Promise<LoadOrderResponse> {
+    const db = getDb();
+    const packages = queryAll<PackageRow>(
+      db.prepare(`
+        SELECT * FROM packages
+        WHERE manifest_id = ? AND lat != 0 AND lng != 0 AND is_ghost = 0
+      `),
+      route.manifest_id
+    );
+    if (packages.length === 0) {
+      throw new Error("No geocoded packages on this manifest to plan load order.");
+    }
+
+    const plan = await planRouteFromPackages(route, packages);
+    const pkgById = new Map(packages.map((p) => [p.id, p]));
+
+    const stops: RouteStopDetail[] = plan.stops.map((s) => ({
+      id: `preview-${s.sequenceNumber}`,
+      routeId: route.id,
+      sequenceNumber: s.sequenceNumber,
+      clusterId: s.clusterId,
+      centroid: s.centroid,
+      driveSecondsFromPrev: s.driveSecondsFromPrev,
+      driveMilesFromPrev: s.driveMilesFromPrev,
+      alerts: s.alerts,
+      geometry: s.geometry,
+      status: "pending" as const,
+      arrivedAt: null,
+      completedAt: null,
+      packages: s.packageIds
+        .map((id) => pkgById.get(id))
+        .filter((p): p is PackageRow => p != null)
+        .map(toPackageDetail),
+    }));
+
+    return buildLoadOrderFromDetail(
+      {
+        id: route.id,
+        manifestId: route.manifest_id,
+        driverName: route.driver_name,
+        vehicleId: route.vehicle_id,
+        status: route.status,
+        startAddress: route.start_address,
+        startLat: route.start_lat,
+        startLng: route.start_lng,
+        clusterMeters: route.cluster_meters,
+        alertMeters: route.alert_meters,
+        createdAt: route.created_at,
+        optimizedAt: route.optimized_at,
+        completedAt: route.completed_at,
+        stops,
+      },
+      "preview"
+    );
+  }
+
+  // ── GET /api/routes/:id/load-order ───────────────────────
+  router.get("/:id/load-order", async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const routeId = String(req.params["id"]);
+      const detail = buildRouteDetail(routeId);
+      if (!detail) { res.status(404).json({ error: "Route not found." }); return; }
+
+      if (detail.stops.length > 0) {
+        res.json(buildLoadOrderFromDetail(detail, "optimized"));
+        return;
+      }
+
+      const db = getDb();
+      const route = queryOne<RouteRow>(db.prepare(`SELECT * FROM routes WHERE id = ?`), routeId)!;
+      const preview = await buildLoadOrderPreview(route);
+      res.json(preview);
+    } catch (err) { next(err); }
+  });
+
+  // ── GET /api/routes/:id/export/:format ─────────────────────
+  router.get("/:id/export/:format", (req: Request, res: Response, next: NextFunction): void => {
+    try {
+      const format = String(req.params["format"]).toLowerCase();
+      const detail = buildRouteDetail(String(req.params["id"]));
+      if (!detail) { res.status(404).json({ error: "Route not found." }); return; }
+      if (detail.stops.length === 0) {
+        res.status(422).json({ error: "Route must be optimized before export." }); return;
+      }
+
+      const filename = `route-${detail.id.slice(0, 8)}`;
+      if (format === "gpx") {
+        res.setHeader("Content-Type", "application/gpx+xml");
+        res.setHeader("Content-Disposition", `attachment; filename="${filename}.gpx"`);
+        res.send(buildGpx(detail));
+        return;
+      }
+      if (format === "kml") {
+        res.setHeader("Content-Type", "application/vnd.google-earth.kml+xml");
+        res.setHeader("Content-Disposition", `attachment; filename="${filename}.kml"`);
+        res.send(buildKml(detail));
+        return;
+      }
+      if (format === "csv") {
+        res.setHeader("Content-Type", "text/csv");
+        res.setHeader("Content-Disposition", `attachment; filename="${filename}.csv"`);
+        res.send(buildCsv(detail));
+        return;
+      }
+      res.status(400).json({ error: "Format must be gpx, kml, or csv." });
+    } catch (err) { next(err); }
+  });
+
   // ── POST /api/routes/:id/optimize ────────────────────────
   router.post(
     "/:id/optimize",
@@ -222,40 +343,12 @@ export function createRoutesRouter(io: SocketServer): Router {
           res.status(422).json({ error: "No packages with valid coordinates loaded onto this route." }); return;
         }
 
-        const osrmBaseUrl = process.env.OSRM_BASE_URL ?? "http://router.project-osrm.org";
-        let startLat = route.start_lat;
-        let startLng = route.start_lng;
-
-        if (!startLat || !startLng) {
-          const googleApiKey = process.env.GOOGLE_GEOCODING_API_KEY;
-          if (!googleApiKey) {
-            res.status(500).json({ error: "GOOGLE_GEOCODING_API_KEY required to geocode start address." }); return;
-          }
-          const { geocodeAll } = await import("../services/geocoder.js");
-          const { start } = await geocodeAll(route.start_address, [], googleApiKey);
-          startLat = start.lat; startLng = start.lng;
-          exec(db.prepare(`UPDATE routes SET start_lat = ?, start_lng = ? WHERE id = ?`), startLat, startLng, route.id);
+        const depot = await resolveDepot(route);
+        if (!route.start_lat || !route.start_lng) {
+          exec(db.prepare(`UPDATE routes SET start_lat = ?, start_lng = ? WHERE id = ?`), depot.lat, depot.lng, route.id);
         }
 
-        const depot = { lat: startLat, lng: startLng };
-        const geocodedStops: GeocodedStop[] = packages.map((p) => ({
-          address: `${p.address}, ${p.city}, ${p.state} ${p.zip}`,
-          packageCount: p.package_count, lat: p.lat, lng: p.lng,
-        }));
-
-        const clusters = clusterStops(geocodedStops, route.cluster_meters);
-        const durationMatrix = await buildDurationMatrix(depot, clusters, osrmBaseUrl);
-        const orderedIndices = optimizeRoute(durationMatrix);
-        const orderedClusters = orderedIndices.map((i) => clusters[i]);
-
-        const legMetrics = await Promise.all(
-          orderedClusters.map(async (cluster, stepIdx) => {
-            const from = stepIdx === 0 ? depot : orderedClusters[stepIdx - 1].centroid;
-            return fetchLegMetrics(from, cluster.centroid, osrmBaseUrl);
-          })
-        );
-
-        const alertsPerCluster = generateAlerts(orderedClusters, route.alert_meters);
+        const plan = await planRouteFromPackages(route, packages);
         const now = new Date().toISOString();
 
         exec(db.prepare(`DELETE FROM route_stops WHERE route_id = ?`), route.id);
@@ -271,31 +364,19 @@ export function createRoutesRouter(io: SocketServer): Router {
           INSERT OR IGNORE INTO route_stop_packages (route_stop_id, package_id) VALUES (?, ?)
         `);
 
-        for (let i = 0; i < orderedClusters.length; i++) {
-          const cluster = orderedClusters[i];
-          const metrics = legMetrics[i];
+        for (const stop of plan.stops) {
           const stopId = uuidv4();
-          const distMiles = Math.round((metrics.distanceMeters / METERS_PER_MILE) * 100) / 100;
-
           exec(
             insertStop,
-            stopId, route.id, i + 1, cluster.clusterId,
-            cluster.centroid.lat, cluster.centroid.lng,
-            Math.round(metrics.durationSeconds), distMiles,
-            JSON.stringify(alertsPerCluster[i]),
-            metrics.geometry ? JSON.stringify(metrics.geometry) : null
+            stopId, route.id, stop.sequenceNumber, stop.clusterId,
+            stop.centroid.lat, stop.centroid.lng,
+            stop.driveSecondsFromPrev, stop.driveMilesFromPrev,
+            JSON.stringify(stop.alerts),
+            stop.geometry ? JSON.stringify(stop.geometry) : null
           );
-
-          for (const stop of cluster.stops) {
-            const addrPrefix = stop.address.split(",")[0].toLowerCase().trim();
-            const matchingPkgs = packages.filter((p) =>
-              p.address.toLowerCase().trim() === addrPrefix ||
-              `${p.address}, ${p.city}, ${p.state} ${p.zip}`.toLowerCase().includes(addrPrefix)
-            );
-            for (const mp of matchingPkgs) {
-              exec(linkPkg, stopId, mp.id);
-              exec(db.prepare(`UPDATE packages SET status = 'in_route' WHERE id = ?`), mp.id);
-            }
+          for (const pkgId of stop.packageIds) {
+            exec(linkPkg, stopId, pkgId);
+            exec(db.prepare(`UPDATE packages SET status = 'in_route' WHERE id = ?`), pkgId);
           }
         }
 

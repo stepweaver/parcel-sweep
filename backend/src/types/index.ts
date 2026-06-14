@@ -235,3 +235,18 @@ export interface RouteDetail {
   completedAt: string | null;
   stops: RouteStopDetail[];
 }
+
+export interface LoadOrderItem {
+  loadPosition: number;
+  deliverySequence: number;
+  stopId: string | null;
+  address: string;
+  packages: PackageDetail[];
+  loaded: boolean;
+}
+
+export interface LoadOrderResponse {
+  source: "optimized" | "preview";
+  totalStops: number;
+  items: LoadOrderItem[];
+}

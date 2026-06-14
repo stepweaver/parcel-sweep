@@ -4,7 +4,9 @@ import { v4 as uuidv4 } from "uuid";
 import { api, type RouteDetail, type RouteStopDetail } from "../api";
 import { DeliveryMap } from "../components/DeliveryMap";
 import { AlertBanner, type ActiveAlert } from "../components/AlertBanner";
+import { NavigateButtons } from "../components/NavigateButtons";
 import { joinRoute, leaveRoute, onStopCompleted, onRouteComplete } from "../socket";
+import { notifyProximityAlert, requestNotificationPermission } from "../utils/proximityNotify";
 
 // ── Client-side Haversine ──────────────────────────────────────────────────
 const EARTH_R = 6_371_000;
@@ -80,14 +82,20 @@ export function DriverView() {
     if (r.status === "complete") setRouteComplete(true);
   }, [id]);
 
-  // ── Screen Wake Lock ────────────────────────────────────────────────────
+  // ── Screen Wake Lock + notification permission ─────────────────────────
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   useEffect(() => {
     if (!("wakeLock" in navigator)) return;
     navigator.wakeLock.request("screen")
       .then((wl) => { wakeLockRef.current = wl; })
       .catch(() => { /* permission denied — silently skip */ });
+    void requestNotificationPermission();
     return () => { wakeLockRef.current?.release().catch(() => {}); };
+  }, []);
+
+  const fireAlert = useCallback((alert: ActiveAlert) => {
+    setActiveAlert(alert);
+    notifyProximityAlert(alert);
   }, []);
 
   // ── Proximity engine ────────────────────────────────────────────────────
@@ -101,7 +109,7 @@ export function DriverView() {
 
       if (dist < ZONE_ARRIVING && !firedZonesRef.current.has(`${sid}:arriving`)) {
         firedZonesRef.current.add(`${sid}:arriving`);
-        setActiveAlert({
+        fireAlert({
           id: uuidv4(),
           level: "arriving",
           lines: [
@@ -112,7 +120,7 @@ export function DriverView() {
         });
       } else if (dist < ZONE_ALERT && !firedZonesRef.current.has(`${sid}:alert`)) {
         firedZonesRef.current.add(`${sid}:alert`);
-        setActiveAlert({
+        fireAlert({
           id: uuidv4(),
           level: "alert",
           lines: [
@@ -122,7 +130,7 @@ export function DriverView() {
         });
       } else if (dist < ZONE_WARNING && !firedZonesRef.current.has(`${sid}:warning`)) {
         firedZonesRef.current.add(`${sid}:warning`);
-        setActiveAlert({
+        fireAlert({
           id: uuidv4(),
           level: "warning",
           lines: [
@@ -140,7 +148,7 @@ export function DriverView() {
       const dist = haversine(pos, stop.centroid);
       if (dist < alertMeters && !firedZonesRef.current.has(`${stop.id}:nearby`)) {
         firedZonesRef.current.add(`${stop.id}:nearby`);
-        setActiveAlert({
+        fireAlert({
           id: uuidv4(),
           level: "nearby",
           lines: [
@@ -152,7 +160,7 @@ export function DriverView() {
         break; // one nearby alert at a time
       }
     }
-  }, []);
+  }, [fireAlert]);
 
   // ── Unified GPS handler ────────────────────────────────────────────────
   const handleGps = useCallback((pos: { lat: number; lng: number }, r: RouteDetail | null, currIdx: number) => {
@@ -412,7 +420,7 @@ export function DriverView() {
           )}
 
           {/* Action buttons */}
-          <div style={{ display: "flex", gap: ".75rem", marginTop: ".25rem" }}>
+          <div style={{ display: "flex", gap: ".75rem", marginTop: ".25rem", flexWrap: "wrap", alignItems: "center" }}>
             {activeStop.status === "pending" && (
               <button
                 className="btn-primary"
@@ -441,6 +449,23 @@ export function DriverView() {
               </button>
             )}
           </div>
+
+          {/* External navigation */}
+          {activeStop.packages[0] && (
+            <div style={{ marginTop: ".35rem" }}>
+              <div style={{ color: "#64748b", fontSize: ".72rem", marginBottom: ".3rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".06em" }}>
+                Navigate
+              </div>
+              <NavigateButtons
+                target={{
+                  lat: activeStop.centroid.lat,
+                  lng: activeStop.centroid.lng,
+                  address: `${activeStop.packages[0].address}, ${activeStop.packages[0].city}, ${activeStop.packages[0].state} ${activeStop.packages[0].zip}`,
+                }}
+                size="sm"
+              />
+            </div>
+          )}
         </div>
       ) : (
         <div style={{ flexShrink: 0, background: "#0f172a", borderTop: "2px solid #1e3a5f", padding: "1.5rem", textAlign: "center" }}>

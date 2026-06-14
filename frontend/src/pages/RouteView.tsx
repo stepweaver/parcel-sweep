@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { api, type RouteDetail } from "../api";
+import { api, type RouteDetail, type LoadOrderResponse } from "../api";
 import { DeliveryMap } from "../components/DeliveryMap";
 import { StopCard } from "../components/StopCard";
+import { LoadOrderList } from "../components/LoadOrderList";
+import { ExportButtons } from "../components/NavigateButtons";
+import { googleMapsFullRouteUrl, openExternal } from "../utils/navigationLinks";
 
 export function RouteView() {
   const { id } = useParams<{ id: string }>();
@@ -12,6 +15,8 @@ export function RouteView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  const [loadOrder, setLoadOrder] = useState<LoadOrderResponse | null>(null);
+  const [showLoadOrder, setShowLoadOrder] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -19,6 +24,7 @@ export function RouteView() {
       .then(setRoute)
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
+    api.routes.loadOrder(id).then(setLoadOrder).catch(() => {});
   }, [id]);
 
   const handleStart = async () => {
@@ -41,6 +47,16 @@ export function RouteView() {
   const totalMiles = Math.round(route.stops.reduce((s, stop) => s + stop.driveMilesFromPrev, 0) * 10) / 10;
   const totalPkgs = route.stops.reduce((s, stop) => s + stop.packages.reduce((ss, p) => ss + p.packageCount, 0), 0);
   const alertStops = route.stops.filter((s) => s.alerts.length > 0).length;
+  const canExport = route.stops.length > 0;
+
+  const openFullRouteInGoogle = () => {
+    if (!route.startLat || !route.startLng) return;
+    const url = googleMapsFullRouteUrl(
+      { lat: route.startLat, lng: route.startLng, address: route.startAddress },
+      route.stops.map((s) => s.centroid)
+    );
+    openExternal(url);
+  };
 
   return (
     <div className="page">
@@ -61,6 +77,41 @@ export function RouteView() {
           {starting ? <><span className="spinner" /> Starting…</> : "Start Delivery 🚚"}
         </button>
       </div>
+
+      {/* Export + navigation toolbar */}
+      <div className="card" style={{ marginBottom: "1.5rem", display: "flex", flexWrap: "wrap", gap: "1rem", alignItems: "center" }}>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: ".9rem", marginBottom: ".35rem" }}>Export route</div>
+          <ExportButtons routeId={route.id} disabled={!canExport} />
+        </div>
+        <div style={{ borderLeft: "1px solid var(--border)", paddingLeft: "1rem" }}>
+          <div style={{ fontWeight: 700, fontSize: ".9rem", marginBottom: ".35rem" }}>External GPS</div>
+          <button
+            className="btn-primary"
+            style={{ fontSize: ".85rem" }}
+            disabled={!canExport || route.startLat == null}
+            onClick={openFullRouteInGoogle}
+          >
+            Open full route in Google Maps
+          </button>
+        </div>
+        <div style={{ marginLeft: "auto" }}>
+          <button
+            className="btn-ghost"
+            style={{ fontSize: ".85rem" }}
+            onClick={() => setShowLoadOrder((v) => !v)}
+          >
+            {showLoadOrder ? "Hide" : "Show"} truck load order
+          </button>
+        </div>
+      </div>
+
+      {showLoadOrder && loadOrder && (
+        <div className="card" style={{ marginBottom: "1.5rem" }}>
+          <h2 className="panel-title" style={{ marginBottom: ".75rem" }}>Truck Load Order (reverse delivery sequence)</h2>
+          <LoadOrderList items={loadOrder.items} source={loadOrder.source} />
+        </div>
+      )}
 
       {/* Summary cards */}
       <div className="grid-3" style={{ marginBottom: "1.5rem" }}>

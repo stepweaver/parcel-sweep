@@ -125,7 +125,9 @@ httpServer.listen(PORT, () => {
   console.log(`  POST  /api/manifests/generate`);
   console.log(`  GET   /api/manifests`);
   console.log(`  POST  /api/routes`);
-  console.log(`  POST  /api/optimize-route`);
+  console.log(`  POST  /api/routes/:id/optimize`);
+  console.log(`  GET   /api/routes/:id/load-order`);
+  console.log(`  GET   /api/routes/:id/export/{gpx,kml,csv}`);
   console.log(`  WebSocket /socket.io\n`);
 });
 

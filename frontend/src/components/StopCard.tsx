@@ -1,4 +1,5 @@
 import type { RouteStopDetail } from "../api";
+import { NavigateButtons } from "./NavigateButtons";
 
 interface StopCardProps {
   stop: RouteStopDetail;
@@ -70,6 +71,19 @@ export function StopCard({ stop, isActive, onArrive, onComplete }: StopCardProps
       {stop.alerts.length > 0 && (
         <div style={{ background: "#fffbeb", border: "1px solid #fde047", borderRadius: 6, padding: ".5rem .75rem", fontSize: ".82rem", color: "#92400e" }}>
           {stop.alerts.map((a, i) => <div key={i}>⚠ {a}</div>)}
+        </div>
+      )}
+
+      {stop.packages[0] && (
+        <div style={{ marginTop: ".5rem" }}>
+          <NavigateButtons
+            target={{
+              lat: stop.centroid.lat,
+              lng: stop.centroid.lng,
+              address: `${stop.packages[0].address}, ${stop.packages[0].city}, ${stop.packages[0].state} ${stop.packages[0].zip}`,
+            }}
+            size="sm"
+          />
         </div>
       )}
 
