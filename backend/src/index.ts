@@ -138,6 +138,8 @@ httpServer.listen(PORT, () => {
   console.log(`  CORS origin: ${FRONTEND_ORIGIN}`);
   console.log(`  Frontend:    ${serveFrontend ? "serving /frontend/dist" : "dev only (run Vite separately)"}`);
   console.log(`  POST  /api/manifests/generate`);
+  console.log(`  POST  /api/manifests/:id/propose-routes`);
+  console.log(`  POST  /api/manifests/:id/routes/from-proposal`);
   console.log(`  GET   /api/manifests`);
   console.log(`  POST  /api/routes`);
   console.log(`  POST  /api/routes/:id/optimize`);

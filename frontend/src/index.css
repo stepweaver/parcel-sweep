@@ -423,6 +423,85 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.25rem; min-width: 0; }
 .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.25rem; min-width: 0; }
 
+.proposal-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.proposal-card {
+  display: flex;
+  flex-direction: column;
+  gap: .75rem;
+  border-left: 3px solid var(--usps-blue);
+}
+
+.proposal-card--created {
+  opacity: .75;
+  border-left-color: #16a34a;
+}
+
+.proposal-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: .5rem;
+}
+
+.proposal-card__label {
+  font-size: .75rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-muted);
+}
+
+.proposal-card__title {
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.proposal-card__stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .5rem;
+  font-size: .85rem;
+  color: var(--text-secondary);
+}
+
+.proposal-card__details summary {
+  cursor: pointer;
+  font-size: .82rem;
+  color: var(--usps-blue);
+  font-weight: 600;
+}
+
+.proposal-card__stops {
+  margin: .5rem 0 0 1.1rem;
+  font-size: .8rem;
+  color: var(--text-secondary);
+}
+
+.proposal-card__form {
+  display: flex;
+  flex-direction: column;
+  gap: .65rem;
+  margin-top: auto;
+  padding-top: .5rem;
+  border-top: 1px solid var(--border);
+}
+
+.proposal-card__field-label {
+  display: block;
+  font-size: .78rem;
+  font-weight: 600;
+  margin-bottom: .2rem;
+  color: var(--text-label);
+}
+
+.proposal-card__form input {
+  width: 100%;
+}
+
 /* ── Package list (mobile-friendly cards) ─────────────────────────────────── */
 
 .package-list {

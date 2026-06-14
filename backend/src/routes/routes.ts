@@ -21,11 +21,43 @@ import {
 export function createRoutesRouter(io: SocketServer): Router {
   const router = Router();
 
+  function manifestHasRouteAssignments(manifestId: string): boolean {
+    const row = queryOne<{ cnt: number }>(
+      getDb().prepare(
+        `SELECT COUNT(*) as cnt FROM packages WHERE manifest_id = ? AND assigned_route_id IS NOT NULL`
+      ),
+      manifestId
+    );
+    return (row?.cnt ?? 0) > 0;
+  }
+
+  function packagesForRoute(packages: PackageRow[], routeId: string, manifestId: string): PackageRow[] {
+    if (!manifestHasRouteAssignments(manifestId)) return packages;
+    return packages.filter((p) => p.assigned_route_id === routeId);
+  }
+
+  function assertPackageAssignableToRoute(
+    pkg: PackageRow,
+    route: RouteRow
+  ): string | null {
+    if (pkg.manifest_id !== route.manifest_id) {
+      return "Package not found on this manifest.";
+    }
+    if (pkg.assigned_route_id && pkg.assigned_route_id !== route.id) {
+      return "This package belongs to a different route on this manifest.";
+    }
+    if (!pkg.assigned_route_id && manifestHasRouteAssignments(route.manifest_id)) {
+      return "This package is not assigned to your route.";
+    }
+    return null;
+  }
+
   // ── Helpers ──────────────────────────────────────────────
 
   function toPackageDetail(p: PackageRow): PackageDetail {
     return {
-      id: p.id, manifestId: p.manifest_id, trackingNumber: p.tracking_number,
+      id: p.id, manifestId: p.manifest_id, assignedRouteId: p.assigned_route_id,
+      trackingNumber: p.tracking_number,
       recipientName: p.recipient_name, address: p.address, city: p.city,
       state: p.state, zip: p.zip, lat: p.lat, lng: p.lng,
       packageCount: p.package_count, serviceType: p.service_type,
@@ -328,17 +360,22 @@ export function createRoutesRouter(io: SocketServer): Router {
         exec(
           db.prepare(`
             INSERT INTO packages
-              (id, manifest_id, tracking_number, recipient_name, address,
+              (id, manifest_id, assigned_route_id, tracking_number, recipient_name, address,
                city, state, zip, lat, lng, package_count, service_type,
                weight_oz, status, is_ghost, created_at, scanned_at)
-            VALUES (?, ?, ?, 'Unknown Recipient', 'Address Not Found',
+            VALUES (?, ?, ?, ?, 'Unknown Recipient', 'Address Not Found',
                     'Unknown', 'IN', '00000', 0, 0, 1, 'Unknown', 0,
                     'loaded', 1, ?, ?)
           `),
-          ghostId, route.manifest_id, trackingNumber, now, now
+          ghostId, route.manifest_id, route.id, trackingNumber, now, now
         );
         pkg = queryOne<PackageRow>(db.prepare(`SELECT * FROM packages WHERE id = ?`), ghostId)!;
       } else {
+        const assignError = assertPackageAssignableToRoute(pkg, route);
+        if (assignError) {
+          res.status(409).json({ error: assignError });
+          return;
+        }
         exec(
           db.prepare(`UPDATE packages SET status = 'loaded', scanned_at = ? WHERE id = ?`),
           now, pkg.id
@@ -377,15 +414,16 @@ export function createRoutesRouter(io: SocketServer): Router {
 
   async function buildLoadOrderPreview(route: RouteRow): Promise<LoadOrderResponse> {
     const db = getDb();
-    const packages = queryAll<PackageRow>(
+    const allPackages = queryAll<PackageRow>(
       db.prepare(`
         SELECT * FROM packages
         WHERE manifest_id = ? AND lat != 0 AND lng != 0 AND is_ghost = 0
       `),
       route.manifest_id
     );
+    const packages = packagesForRoute(allPackages, route.id, route.manifest_id);
     if (packages.length === 0) {
-      throw new Error("No geocoded packages on this manifest to plan load order.");
+      throw new Error("No geocoded packages assigned to this route to plan load order.");
     }
 
     const plan = await planRouteFromPackages(route, packages);
@@ -499,13 +537,14 @@ export function createRoutesRouter(io: SocketServer): Router {
           res.status(409).json({ error: `Cannot optimize a route with status "${route.status}".` }); return;
         }
 
-        const packages = queryAll<PackageRow>(
+        const allPackages = queryAll<PackageRow>(
           db.prepare(`
             SELECT * FROM packages
             WHERE manifest_id = ? AND status IN ('loaded', 'in_route')
               AND lat != 0 AND lng != 0
           `), route.manifest_id
         );
+        const packages = packagesForRoute(allPackages, route.id, route.manifest_id);
         if (packages.length === 0) {
           res.status(422).json({ error: "No packages with valid coordinates loaded onto this route." }); return;
         }

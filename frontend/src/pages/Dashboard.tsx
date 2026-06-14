@@ -76,10 +76,12 @@ export function Dashboard() {
               ) : (
                 <div>
                   {manifests.slice(0, 8).map((m) => {
-                    const routeForManifest = routes.find((r) => r.manifestId === m.id);
-                    const label = routeForManifest?.routeNumber
-                      ? `Route ${routeForManifest.routeNumber}`
-                      : `ZIP ${m.zipCode}`;
+                    const manifestRoutes = routes.filter((r) => r.manifestId === m.id);
+                    const label = manifestRoutes.length === 1 && manifestRoutes[0]?.routeNumber
+                      ? `Route ${manifestRoutes[0].routeNumber}`
+                      : manifestRoutes.length > 1
+                        ? `ZIP ${m.zipCode} · ${manifestRoutes.length} routes`
+                        : `ZIP ${m.zipCode}`;
 
                     return (
                     <Link

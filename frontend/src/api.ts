@@ -11,6 +11,7 @@ export interface ManifestSummary {
 export interface PackageDetail {
   id: string;
   manifestId: string;
+  assignedRouteId: string | null;
   trackingNumber: string;
   recipientName: string;
   address: string;
@@ -96,6 +97,59 @@ export interface LoadOrderResponse {
   items: LoadOrderItem[];
 }
 
+export interface RouteProposalStop {
+  sequenceNumber: number;
+  clusterId: string;
+  centroid: { lat: number; lng: number };
+  driveSecondsFromPrev: number;
+  driveMilesFromPrev: number;
+  alerts: string[];
+  packageIds: string[];
+}
+
+export interface RouteProposal {
+  proposalId: string;
+  label: string;
+  stopCount: number;
+  packageCount: number;
+  estimatedDriveSeconds: number;
+  estimatedDriveMiles: number;
+  returnDriveSeconds: number;
+  returnDriveMiles: number;
+  stops: RouteProposalStop[];
+  packageIds: string[];
+}
+
+export interface ProposeRoutesResponse {
+  start: { address: string; lat: number; lng: number };
+  settings: {
+    clusterMeters: number;
+    alertMeters: number;
+    driverCount: number;
+    maxPackagesPerRoute: number;
+    maxStopsPerRoute: number;
+  };
+  summary: {
+    totalPackages: number;
+    totalStops: number;
+    proposalCount: number;
+    unassignedPackages: number;
+    alreadyAssignedPackages: number;
+  };
+  proposals: RouteProposal[];
+}
+
+export interface CreatedRouteFromProposal {
+  id: string;
+  manifestId: string;
+  routeNumber: string | null;
+  driverName: string;
+  status: string;
+  startAddress: string;
+  assignedPackageCount: number;
+  proposalId: string;
+}
+
 async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     headers: { "Content-Type": "application/json", ...options?.headers },
@@ -121,6 +175,32 @@ export const api = {
         body: JSON.stringify({ zipCode, count }),
       }),
     delete: (id: string) => apiFetch<{ deleted: string }>(`/api/manifests/${id}`, { method: "DELETE" }),
+    routes: (id: string) => apiFetch<RouteSummary[]>(`/api/manifests/${id}/routes`),
+    proposeRoutes: (id: string, data: {
+      startAddress: string;
+      driverCount: number;
+      clusterMeters?: number;
+      alertMeters?: number;
+      maxPackagesPerRoute?: number;
+      maxStopsPerRoute?: number;
+    }) =>
+      apiFetch<ProposeRoutesResponse>(`/api/manifests/${id}/propose-routes`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    createRouteFromProposal: (id: string, data: {
+      startAddress: string;
+      routeNumber: string;
+      driverName?: string;
+      vehicleId?: string;
+      clusterMeters?: number;
+      alertMeters?: number;
+      proposal: RouteProposal;
+    }) =>
+      apiFetch<CreatedRouteFromProposal>(`/api/manifests/${id}/routes/from-proposal`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
   },
 
   routes: {

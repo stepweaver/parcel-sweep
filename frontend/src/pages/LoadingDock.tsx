@@ -123,7 +123,9 @@ export function LoadingDock() {
   if (!route) return null;
 
   const loadedPackages = manifestPackages.filter((p) => ["loaded", "in_route"].includes(p.status));
-  const pendingPackages = manifestPackages.filter((p) => p.status === "pending");
+  const pendingPackages = manifestPackages.filter(
+    (p) => p.status === "pending" && (!p.assignedRouteId || p.assignedRouteId === route.id)
+  );
   const ghostPackages = manifestPackages.filter((p) => p.isGhost);
 
   const isLoading = route.status === "loading";

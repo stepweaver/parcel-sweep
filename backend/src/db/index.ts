@@ -34,6 +34,7 @@ function initSchema(db: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS packages (
       id               TEXT PRIMARY KEY,
       manifest_id      TEXT NOT NULL,
+      assigned_route_id TEXT,
       tracking_number  TEXT NOT NULL UNIQUE,
       recipient_name   TEXT NOT NULL,
       address          TEXT NOT NULL,
@@ -125,6 +126,11 @@ function migrateSchema(db: DatabaseSync): void {
   }
   if (!cols.has("route_number")) {
     db.exec(`ALTER TABLE routes ADD COLUMN route_number TEXT`);
+  }
+
+  const packageCols = queryColumnNames(db, "packages");
+  if (!packageCols.has("assigned_route_id")) {
+    db.exec(`ALTER TABLE packages ADD COLUMN assigned_route_id TEXT`);
   }
 }
 

@@ -9,6 +9,7 @@ function toPackageDetail(p: PackageRow): PackageDetail {
   return {
     id: p.id,
     manifestId: p.manifest_id,
+    assignedRouteId: p.assigned_route_id,
     trackingNumber: p.tracking_number,
     recipientName: p.recipient_name,
     address: p.address,

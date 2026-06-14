@@ -106,6 +106,7 @@ export type PackageStatus = "pending" | "scanned" | "loaded" | "in_route" | "del
 export interface PackageRow {
   id: string;
   manifest_id: string;
+  assigned_route_id: string | null;
   tracking_number: string;
   recipient_name: string;
   address: string;
@@ -185,9 +186,52 @@ export interface ManifestSummary {
   status: string;
 }
 
+export interface RouteProposalStop {
+  sequenceNumber: number;
+  clusterId: string;
+  centroid: LatLng;
+  driveSecondsFromPrev: number;
+  driveMilesFromPrev: number;
+  alerts: string[];
+  packageIds: string[];
+}
+
+export interface RouteProposal {
+  proposalId: string;
+  label: string;
+  stopCount: number;
+  packageCount: number;
+  estimatedDriveSeconds: number;
+  estimatedDriveMiles: number;
+  returnDriveSeconds: number;
+  returnDriveMiles: number;
+  stops: RouteProposalStop[];
+  packageIds: string[];
+}
+
+export interface ProposeRoutesResponse {
+  start: { address: string; lat: number; lng: number };
+  settings: {
+    clusterMeters: number;
+    alertMeters: number;
+    driverCount: number;
+    maxPackagesPerRoute: number;
+    maxStopsPerRoute: number;
+  };
+  summary: {
+    totalPackages: number;
+    totalStops: number;
+    proposalCount: number;
+    unassignedPackages: number;
+    alreadyAssignedPackages: number;
+  };
+  proposals: RouteProposal[];
+}
+
 export interface PackageDetail {
   id: string;
   manifestId: string;
+  assignedRouteId: string | null;
   trackingNumber: string;
   recipientName: string;
   address: string;
