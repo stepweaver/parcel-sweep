@@ -414,6 +414,7 @@ export function createRoutesRouter(io: SocketServer): Router {
       {
         id: route.id,
         manifestId: route.manifest_id,
+        routeNumber: route.route_number,
         driverName: route.driver_name,
         vehicleId: route.vehicle_id,
         status: route.status,
