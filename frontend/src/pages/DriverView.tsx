@@ -43,6 +43,28 @@ function interpolatePath(geo: [number, number][], t: number): { lat: number; lng
   return { lat: geo[geo.length - 1][1], lng: geo[geo.length - 1][0] };
 }
 
+/** Urban delivery pace when route leg timings are unavailable (~25 mph). */
+const DEMO_URBAN_MPS = 11;
+const DEMO_TICK_MS = 200;
+const DEMO_MIN_DURATION_SEC = 120;
+
+function estimatePathDurationSec(geo: [number, number][]): number {
+  let meters = 0;
+  for (let i = 1; i < geo.length; i++) {
+    meters += haversine(
+      { lat: geo[i - 1][1], lng: geo[i - 1][0] },
+      { lat: geo[i][1], lng: geo[i][0] },
+    );
+  }
+  return meters / DEMO_URBAN_MPS;
+}
+
+function demoDurationSec(route: RouteDetail, geo: [number, number][]): number {
+  const driveSec = route.stops.reduce((sum, stop) => sum + stop.driveSecondsFromPrev, 0);
+  const estimated = driveSec > 0 ? driveSec : estimatePathDurationSec(geo);
+  return Math.max(estimated, DEMO_MIN_DURATION_SEC);
+}
+
 function fmtDist(m: number) { return m < 950 ? `${Math.round(m)}m` : `${(m / 1609.34).toFixed(1)} mi`; }
 function fmtEta(secs: number) {
   if (secs <= 0) return "< 1 min";
@@ -231,13 +253,16 @@ export function DriverView() {
 
     demoProgressRef.current = 0;
     let localIdx = activeIdx;
+    let elapsedSec = 0;
+    const durationSec = demoDurationSec(route, allGeo);
 
     demoRef.current = setInterval(() => {
-      demoProgressRef.current = Math.min(demoProgressRef.current + 0.0025, 1);
+      elapsedSec += DEMO_TICK_MS / 1000;
+      demoProgressRef.current = Math.min(elapsedSec / durationSec, 1);
       const pos = interpolatePath(allGeo, demoProgressRef.current);
       handleGps(pos, route, localIdx);
       if (demoProgressRef.current >= 1) { clearInterval(demoRef.current!); demoRef.current = null; }
-    }, 150);
+    }, DEMO_TICK_MS);
 
     return () => { if (demoRef.current) { clearInterval(demoRef.current); demoRef.current = null; } };
   }, [demoMode, route]); // eslint-disable-line react-hooks/exhaustive-deps
