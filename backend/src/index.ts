@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./loadEnv.js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,6 +52,10 @@ app.get("/health", (_req, res) => {
   res.json({
     status: "ok",
     service: "parcel-sweep",
+    version: "1.1.0",
+    build: process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 7)
+      ?? process.env.RENDER_GIT_COMMIT?.slice(0, 7)
+      ?? "local",
     config: {
       googleGeocoding: isGoogleGeocodingConfigured(),
       geocodingFallback: "nominatim",
