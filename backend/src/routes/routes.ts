@@ -16,6 +16,7 @@ import {
   PackageDetail,
   LoadOrderResponse,
   LoadOrderItem,
+  RoutePackagesResponse,
 } from "../types/index.js";
 
 export function createRoutesRouter(io: SocketServer): Router {
@@ -114,6 +115,87 @@ export function createRoutesRouter(io: SocketServer): Router {
   router.get("/", (_req: Request, res: Response, next: NextFunction): void => {
     try {
       res.json(buildRouteSummaries());
+    } catch (err) { next(err); }
+  });
+
+  function getPackagesForRoute(routeId: string): RoutePackagesResponse | null {
+    const db = getDb();
+    const route = queryOne<RouteRow>(db.prepare(`SELECT * FROM routes WHERE id = ?`), routeId);
+    if (!route) return null;
+
+    const allPackages = queryAll<PackageRow>(
+      db.prepare(`SELECT * FROM packages WHERE manifest_id = ? ORDER BY address ASC`),
+      route.manifest_id
+    );
+    const scoped = manifestHasRouteAssignments(route.manifest_id);
+    const packages = packagesForRoute(allPackages, routeId, route.manifest_id);
+    return { packages: packages.map(toPackageDetail), scoped };
+  }
+
+  // ── GET /api/routes/:id/packages ──────────────────────────
+  router.get("/:id/packages", (req: Request, res: Response, next: NextFunction): void => {
+    try {
+      const result = getPackagesForRoute(String(req.params["id"]));
+      if (!result) { res.status(404).json({ error: "Route not found." }); return; }
+      res.json(result);
+    } catch (err) { next(err); }
+  });
+
+  // ── POST /api/routes/:id/assign-packages ──────────────────
+  router.post("/:id/assign-packages", (req: Request, res: Response, next: NextFunction): void => {
+    try {
+      const { packageIds } = req.body as { packageIds?: string[] };
+      if (!packageIds?.length) {
+        res.status(400).json({ error: "packageIds array is required." });
+        return;
+      }
+
+      const db = getDb();
+      const routeId = String(req.params["id"]);
+      const route = queryOne<RouteRow>(db.prepare(`SELECT * FROM routes WHERE id = ?`), routeId);
+      if (!route) { res.status(404).json({ error: "Route not found." }); return; }
+      if (route.status === "complete") {
+        res.status(409).json({ error: "Cannot assign packages to a completed route." });
+        return;
+      }
+
+      const uniqueIds = [...new Set(packageIds)];
+      const rows = queryAll<PackageRow>(
+        db.prepare(`SELECT * FROM packages WHERE id IN (${uniqueIds.map(() => "?").join(",")})`),
+        ...uniqueIds
+      );
+
+      if (rows.length !== uniqueIds.length) {
+        res.status(400).json({ error: "One or more packages were not found." });
+        return;
+      }
+
+      for (const pkg of rows) {
+        if (pkg.manifest_id !== route.manifest_id) {
+          res.status(400).json({ error: "Package is not on this manifest." });
+          return;
+        }
+        if (pkg.assigned_route_id && pkg.assigned_route_id !== routeId) {
+          res.status(409).json({
+            error: `Package ${pkg.tracking_number} is already assigned to another route.`,
+          });
+          return;
+        }
+        if (pkg.status === "delivered") {
+          res.status(409).json({ error: `Package ${pkg.tracking_number} has already been delivered.` });
+          return;
+        }
+      }
+
+      const assignStmt = db.prepare(
+        `UPDATE packages SET assigned_route_id = ? WHERE id = ? AND manifest_id = ?`
+      );
+      for (const pkgId of uniqueIds) {
+        exec(assignStmt, routeId, pkgId, route.manifest_id);
+      }
+
+      const result = getPackagesForRoute(routeId)!;
+      res.json({ assigned: uniqueIds.length, ...result });
     } catch (err) { next(err); }
   });
 

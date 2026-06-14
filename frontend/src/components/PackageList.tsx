@@ -5,6 +5,7 @@ interface PackageListProps {
   onScan?: (pkg: PackageDetail) => void;
   onRemove?: (pkg: PackageDetail) => void;
   showScanButton?: boolean;
+  scanButtonLabel?: string;
   showRemoveButton?: boolean;
   emptyMessage?: string;
 }
@@ -21,6 +22,7 @@ export function PackageList({
   onScan,
   onRemove,
   showScanButton,
+  scanButtonLabel = "Scan",
   showRemoveButton,
   emptyMessage = "No packages.",
 }: PackageListProps) {
@@ -53,7 +55,7 @@ export function PackageList({
                 className="btn-primary package-row__scan"
                 onClick={() => onScan(p)}
               >
-                Scan
+                {scanButtonLabel}
               </button>
             )}
             {showRemoveButton && onRemove && (

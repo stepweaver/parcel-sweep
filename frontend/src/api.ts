@@ -97,6 +97,11 @@ export interface LoadOrderResponse {
   items: LoadOrderItem[];
 }
 
+export interface RoutePackagesResponse {
+  packages: PackageDetail[];
+  scoped: boolean;
+}
+
 export interface RouteProposalStop {
   sequenceNumber: number;
   clusterId: string;
@@ -257,6 +262,13 @@ export const api = {
       ),
     loadOrder: (id: string) =>
       apiFetch<LoadOrderResponse>(`/api/routes/${id}/load-order`),
+    packages: (id: string) =>
+      apiFetch<RoutePackagesResponse>(`/api/routes/${id}/packages`),
+    assignPackages: (id: string, packageIds: string[]) =>
+      apiFetch<RoutePackagesResponse & { assigned: number }>(
+        `/api/routes/${id}/assign-packages`,
+        { method: "POST", body: JSON.stringify({ packageIds }) }
+      ),
     exportUrl: (id: string, format: "gpx" | "kml" | "csv") =>
       `/api/routes/${id}/export/${format}`,
   },

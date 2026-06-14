@@ -17,7 +17,8 @@ export function LoadingDock() {
   const navigate = useNavigate();
 
   const [route, setRoute] = useState<RouteDetail | null>(null);
-  const [manifestPackages, setManifestPackages] = useState<PackageDetail[]>([]);
+  const [routePackages, setRoutePackages] = useState<PackageDetail[]>([]);
+  const [packagesScoped, setPackagesScoped] = useState(false);
   const [scanHistory, setScanHistory] = useState<ScanResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -28,10 +29,13 @@ export function LoadingDock() {
   const [loadOrderError, setLoadOrderError] = useState<string | null>(null);
 
   const loadRoute = async (routeId: string) => {
-    const r = await api.routes.get(routeId);
+    const [r, { packages, scoped }] = await Promise.all([
+      api.routes.get(routeId),
+      api.routes.packages(routeId),
+    ]);
     setRoute(r);
-    const { packages } = await api.manifests.get(r.manifestId);
-    setManifestPackages(packages);
+    setRoutePackages(packages);
+    setPackagesScoped(scoped);
   };
 
   const fetchLoadOrder = async (routeId: string) => {
@@ -100,8 +104,9 @@ export function LoadingDock() {
 
   const handleSessionUpdated = async (updated: RouteDetail) => {
     setRoute(updated);
-    const { packages } = await api.manifests.get(updated.manifestId);
-    setManifestPackages(packages);
+    const { packages, scoped } = await api.routes.packages(updated.id);
+    setRoutePackages(packages);
+    setPackagesScoped(scoped);
     if (id) void fetchLoadOrder(id);
   };
 
@@ -122,11 +127,9 @@ export function LoadingDock() {
   if (error) return <div className="page" style={{ color: "#dc2626" }}>Error: {error}</div>;
   if (!route) return null;
 
-  const loadedPackages = manifestPackages.filter((p) => ["loaded", "in_route"].includes(p.status));
-  const pendingPackages = manifestPackages.filter(
-    (p) => p.status === "pending" && (!p.assignedRouteId || p.assignedRouteId === route.id)
-  );
-  const ghostPackages = manifestPackages.filter((p) => p.isGhost);
+  const loadedPackages = routePackages.filter((p) => ["loaded", "in_route"].includes(p.status));
+  const pendingPackages = routePackages.filter((p) => p.status === "pending" && !p.isGhost);
+  const ghostPackages = routePackages.filter((p) => p.isGhost);
 
   const isLoading = route.status === "loading";
 
@@ -179,9 +182,15 @@ export function LoadingDock() {
 
       <div className="grid-2">
         <div className="card">
-          <h2 className="panel-title" style={{ marginBottom: "1rem" }}>
-            Manifest ({pendingPackages.length} remaining)
+          <h2 className="panel-title" style={{ marginBottom: ".35rem" }}>
+            {packagesScoped ? "Your route" : "Manifest"} ({pendingPackages.length} to scan)
           </h2>
+          {packagesScoped && (
+            <div style={{ color: "#6b7280", fontSize: ".82rem", marginBottom: "1rem" }}>
+              Packages assigned to {route.driverName}
+              {route.routeNumber ? ` · Route ${route.routeNumber}` : ""}. Scan each one onto the truck.
+            </div>
+          )}
           <PackageList
             packages={pendingPackages}
             onScan={isLoading ? handleScanClick : undefined}

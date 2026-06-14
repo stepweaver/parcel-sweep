@@ -305,6 +305,12 @@ export interface LoadOrderResponse {
   items: LoadOrderItem[];
 }
 
+export interface RoutePackagesResponse {
+  packages: PackageDetail[];
+  /** True when manifest uses per-route assignment (not shared pool). */
+  scoped: boolean;
+}
+
 export interface RouteSummary {
   id: string;
   manifestId: string;

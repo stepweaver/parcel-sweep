@@ -46,6 +46,8 @@ export function ManifestPage() {
   const [proposalForms, setProposalForms] = useState<
     Record<string, { driverName: string; routeNumber: string }>
   >({});
+  const [assignRouteId, setAssignRouteId] = useState("");
+  const [assigningId, setAssigningId] = useState<string | null>(null);
 
   const selectedStation = STATIONS.find((s) => s.id === stationId);
   const startAddress = stationId === "custom"
@@ -155,6 +157,25 @@ export function ManifestPage() {
     }));
   };
 
+  const routeLabel = (r: RouteSummary) =>
+    r.routeNumber ? `Route ${r.routeNumber} — ${r.driverName}` : r.driverName;
+
+  const activeRoutes = routes.filter((r) => r.status !== "complete");
+  const unassignedPackages = packages.filter((p) => !p.assignedRouteId && p.status === "pending");
+
+  const handleAssignPackages = async (packageIds: string[], key: string) => {
+    if (!manifest || !assignRouteId) return;
+    setAssigningId(key);
+    try {
+      await api.routes.assignPackages(assignRouteId, packageIds);
+      await refreshManifest(manifest.id);
+    } catch (e) {
+      alert(`Error: ${(e as Error).message}`);
+    } finally {
+      setAssigningId(null);
+    }
+  };
+
   if (isNew) {
     return (
       <div className="page">
@@ -257,6 +278,61 @@ export function ManifestPage() {
               </Link>
             ))}
           </div>
+        </div>
+      )}
+
+      {routes.length > 0 && unassignedPackages.length > 0 && (
+        <div className="card" style={{ marginBottom: "1.5rem" }}>
+          <h2 className="panel-title" style={{ marginBottom: ".5rem" }}>
+            Unassigned packages ({unassignedPackages.length})
+          </h2>
+          <p className="text-muted" style={{ fontSize: ".85rem", marginBottom: "1rem" }}>
+            New packages on the manifest, or leftovers after route planning. Assign them to an active route and driver.
+          </p>
+
+          {activeRoutes.length === 0 ? (
+            <div className="text-muted" style={{ fontSize: ".85rem" }}>
+              All routes on this manifest are complete — create a new route to assign packages.
+            </div>
+          ) : (
+            <>
+              <div style={{ display: "flex", gap: ".75rem", flexWrap: "wrap", alignItems: "flex-end", marginBottom: "1rem" }}>
+                <label style={{ flex: "1 1 220px" }}>
+                  <div style={{ fontWeight: 600, marginBottom: ".25rem", fontSize: ".9rem" }}>Assign to route</div>
+                  <select
+                    value={assignRouteId}
+                    onChange={(e) => setAssignRouteId(e.target.value)}
+                    style={{ width: "100%" }}
+                  >
+                    <option value="">Select route…</option>
+                    {activeRoutes.map((r) => (
+                      <option key={r.id} value={r.id}>{routeLabel(r)}</option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  className="btn-primary"
+                  disabled={!assignRouteId || assigningId === "all"}
+                  onClick={() => void handleAssignPackages(unassignedPackages.map((p) => p.id), "all")}
+                >
+                  {assigningId === "all" ? "Assigning…" : `Assign all (${unassignedPackages.length})`}
+                </button>
+              </div>
+
+              <PackageList
+                packages={unassignedPackages}
+                onScan={assignRouteId ? (pkg) => void handleAssignPackages([pkg.id], pkg.id) : undefined}
+                showScanButton={!!assignRouteId}
+                scanButtonLabel="Assign"
+                emptyMessage="No unassigned packages."
+              />
+              {assignRouteId && (
+                <div className="text-muted" style={{ fontSize: ".82rem", marginTop: ".75rem" }}>
+                  Selected route: {routeLabel(activeRoutes.find((r) => r.id === assignRouteId)!)}
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
 
