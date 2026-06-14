@@ -596,6 +596,70 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   margin-left: auto;
 }
 
+/* ── Map theme selector ───────────────────────────────────────────────────── */
+
+.map-theme-select {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.map-theme-select__label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-label);
+}
+
+.map-theme-select__control {
+  font-family: var(--font-ibm);
+  font-size: 0.85rem;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  min-width: 10.5rem;
+  max-width: 100%;
+  cursor: pointer;
+}
+
+.map-theme-select__control:focus {
+  outline: 2px solid var(--usps-blue);
+  outline-offset: 1px;
+}
+
+.map-theme-select--overlay {
+  position: absolute;
+  top: 0.65rem;
+  right: 0.65rem;
+  z-index: 600;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.5rem 0.35rem 0.65rem;
+  background: rgba(15, 23, 42, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: var(--radius);
+  backdrop-filter: blur(6px);
+}
+
+.map-theme-select--overlay .map-theme-select__label {
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.65rem;
+  white-space: nowrap;
+}
+
+.map-theme-select--overlay .map-theme-select__control {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(255, 255, 255, 0.35);
+  min-width: 8.5rem;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.78rem;
+}
+
 @media (max-width: 700px) {
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
   .app-nav-inner {

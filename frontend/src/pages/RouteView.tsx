@@ -2,14 +2,17 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { api, type RouteDetail, type LoadOrderResponse } from "../api";
 import { DeliveryMap } from "../components/DeliveryMap";
+import { MapThemeSelector } from "../components/MapThemeSelector";
 import { StopCard } from "../components/StopCard";
 import { LoadOrderList } from "../components/LoadOrderList";
 import { ExportButtons } from "../components/NavigateButtons";
+import { useMapTheme } from "../hooks/useMapTheme";
 import { googleMapsFullRouteUrl, openExternal } from "../utils/navigationLinks";
 
 export function RouteView() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { themeId, setThemeId } = useMapTheme();
 
   const [route, setRoute] = useState<RouteDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -99,6 +102,10 @@ export function RouteView() {
             Open full route in Google Maps
           </button>
         </div>
+        <div className="route-toolbar__section route-toolbar__section--bordered">
+          <div style={{ fontWeight: 700, fontSize: ".9rem", marginBottom: ".35rem" }}>Map style</div>
+          <MapThemeSelector themeId={themeId} onChange={setThemeId} />
+        </div>
         <div className="route-toolbar__spacer">
           <button
             className="btn-ghost"
@@ -157,6 +164,7 @@ export function RouteView() {
           <DeliveryMap
             stops={route.stops}
             clusterMeters={route.clusterMeters}
+            mapThemeId={themeId}
             style={{ height: "100%" }}
           />
         </div>

@@ -3,7 +3,9 @@ import { useParams, Link } from "react-router-dom";
 import { v4 as uuidv4 } from "uuid";
 import { api, type RouteDetail, type RouteStopDetail } from "../api";
 import { DeliveryMap } from "../components/DeliveryMap";
+import { MapThemeSelector } from "../components/MapThemeSelector";
 import { AlertBanner, type ActiveAlert } from "../components/AlertBanner";
+import { useMapTheme } from "../hooks/useMapTheme";
 import { NavigateButtons } from "../components/NavigateButtons";
 import { joinRoute, leaveRoute, onStopCompleted, onRouteComplete } from "../socket";
 import { notifyProximityAlert, requestNotificationPermission } from "../utils/proximityNotify";
@@ -57,7 +59,8 @@ function interpolatePath(geo: [number, number][], t: number): { lat: number; lng
 /** Urban delivery pace when route leg timings are unavailable (~25 mph). */
 const DEMO_URBAN_MPS = 11;
 const DEMO_TICK_MS = 200;
-const DEMO_MIN_DURATION_SEC = 120;
+const DEMO_SPEED_OPTIONS = [1, 2, 4] as const;
+type DemoSpeed = (typeof DEMO_SPEED_OPTIONS)[number];
 
 function estimatePathDurationSec(geo: [number, number][]): number {
   let meters = 0;
@@ -70,10 +73,25 @@ function estimatePathDurationSec(geo: [number, number][]): number {
   return meters / DEMO_URBAN_MPS;
 }
 
-function demoDurationSec(route: RouteDetail, geo: [number, number][]): number {
-  const driveSec = route.stops.reduce((sum, stop) => sum + stop.driveSecondsFromPrev, 0);
+function demoLegDurationSec(stop: RouteStopDetail, geo: [number, number][]): number {
+  const driveSec = stop.driveSecondsFromPrev;
   const estimated = driveSec > 0 ? driveSec : estimatePathDurationSec(geo);
-  return Math.max(estimated, DEMO_MIN_DURATION_SEC);
+  return Math.max(estimated, 30);
+}
+
+/** Bearing along the route polyline at normalized progress t ∈ [0, 1]. */
+function headingFromPath(geo: [number, number][], t: number): number {
+  if (geo.length < 2) return 0;
+  const ahead = Math.min(t + 0.015, 1);
+  const from = interpolatePath(geo, t);
+  const to = interpolatePath(geo, ahead);
+  if (haversine(from, to) < 0.5) {
+    return compassBearing(
+      { lat: geo[0][1], lng: geo[0][0] },
+      { lat: geo[1][1], lng: geo[1][0] },
+    );
+  }
+  return compassBearing(from, to);
 }
 
 function fmtDist(m: number) { return m < 950 ? `${Math.round(m)}m` : `${(m / 1609.34).toFixed(1)} mi`; }
@@ -87,6 +105,7 @@ function fmtEta(secs: number) {
 
 export function DriverView() {
   const { id } = useParams<{ id: string }>();
+  const { themeId, setThemeId } = useMapTheme();
   const [route, setRoute] = useState<RouteDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -100,8 +119,17 @@ export function DriverView() {
   const [activeAlert, setActiveAlert] = useState<ActiveAlert | null>(null);
 
   const [demoMode, setDemoMode] = useState(false);
+  const [demoSpeed, setDemoSpeed] = useState<DemoSpeed>(1);
   const demoRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const demoProgressRef = useRef(0);
+  const demoSpeedRef = useRef<DemoSpeed>(1);
+  const demoActionBusyRef = useRef(false);
+  const lastDemoLegRef = useRef<string | null>(null);
+  demoSpeedRef.current = demoSpeed;
+  const routeRef = useRef<RouteDetail | null>(null);
+  const activeIdxRef = useRef(0);
+  routeRef.current = route;
+  activeIdxRef.current = activeIdx;
 
   // Track which alert zones have already fired (keyed by `${stopId}:${zone}`)
   const firedZonesRef = useRef<Set<string>>(new Set());
@@ -112,11 +140,71 @@ export function DriverView() {
   const refreshRoute = useCallback(async () => {
     if (!id) return;
     const r = await api.routes.get(id);
+    routeRef.current = r;
     setRoute(r);
     const next = r.stops.findIndex((s) => s.status === "pending");
-    if (next >= 0) setActiveIdx(next);
+    if (next >= 0) {
+      activeIdxRef.current = next;
+      setActiveIdx(next);
+    }
     if (r.status === "complete") setRouteComplete(true);
   }, [id]);
+
+  /** Demo mirrors production: auto-arrive at the arriving zone, auto-deliver at the stop. */
+  const processDemoStopActions = useCallback(async (
+    pos: { lat: number; lng: number },
+    r: RouteDetail,
+    currIdx: number,
+    atLegEnd: boolean,
+  ) => {
+    if (!demoMode || !id || demoActionBusyRef.current) return;
+
+    const stop = routeRef.current?.stops[currIdx] ?? r.stops[currIdx];
+    if (!stop || stop.status === "complete") return;
+
+    const dist = haversine(pos, stop.centroid);
+
+    if (stop.status === "pending" && (dist <= ZONE_ARRIVING || atLegEnd)) {
+      demoActionBusyRef.current = true;
+      try {
+        await api.routes.stopArrive(id, stop.id);
+        if (atLegEnd) {
+          await api.routes.stopComplete(id, stop.id);
+          firedZonesRef.current = new Set();
+          await refreshRoute();
+        } else {
+          setRoute((prev) => {
+            if (!prev) return prev;
+            const updated = {
+              ...prev,
+              stops: prev.stops.map((s) =>
+                s.id === stop.id
+                  ? { ...s, status: "arrived" as const, arrivedAt: new Date().toISOString() }
+                  : s,
+              ),
+            };
+            routeRef.current = updated;
+            return updated;
+          });
+        }
+      } finally {
+        demoActionBusyRef.current = false;
+      }
+      return;
+    }
+
+    const liveStop = routeRef.current?.stops[currIdx] ?? stop;
+    if (liveStop.status === "arrived" && atLegEnd) {
+      demoActionBusyRef.current = true;
+      try {
+        await api.routes.stopComplete(id, liveStop.id);
+        firedZonesRef.current = new Set();
+        await refreshRoute();
+      } finally {
+        demoActionBusyRef.current = false;
+      }
+    }
+  }, [demoMode, id, refreshRoute]);
 
   // ── Screen Wake Lock + notification permission ─────────────────────────
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
@@ -232,20 +320,16 @@ export function DriverView() {
     }
   }, [id, checkProximity]);
 
-  // ── Initial load + real GPS + socket ──────────────────────────────────
+  // ── Initial load + socket ─────────────────────────────────────────────
   useEffect(() => {
     if (!id) return;
-    let routeSnapshot: RouteDetail | null = null;
-    let activeIdxSnapshot = 0;
 
     api.routes.get(id)
       .then((r) => {
-        routeSnapshot = r;
         setRoute(r);
         if (r.status === "complete") setRouteComplete(true);
         const next = r.stops.findIndex((s) => s.status === "pending");
-        activeIdxSnapshot = next >= 0 ? next : 0;
-        setActiveIdx(activeIdxSnapshot);
+        setActiveIdx(next >= 0 ? next : 0);
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
@@ -253,63 +337,94 @@ export function DriverView() {
     joinRoute(id);
     const offStop = onStopCompleted(async () => {
       await refreshRoute();
-      firedZonesRef.current = new Set(); // reset zones after stop change
+      firedZonesRef.current = new Set();
     });
     const offComplete = onRouteComplete(() => { setRouteComplete(true); void refreshRoute(); });
-
-    // Real GPS watch
-    let watchId: number | null = null;
-    if (navigator.geolocation) {
-      watchId = navigator.geolocation.watchPosition(
-        (pos) => {
-          const rawHeading = pos.coords.heading;
-          const heading = rawHeading != null && Number.isFinite(rawHeading) ? rawHeading : undefined;
-          handleGps(
-            { lat: pos.coords.latitude, lng: pos.coords.longitude },
-            heading,
-            routeSnapshot,
-            activeIdxSnapshot,
-          );
-        },
-        () => { /* permission denied — user can use Demo Mode */ },
-        { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 }
-      );
-    }
 
     return () => {
       leaveRoute(id);
       offStop(); offComplete();
-      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
       if (demoRef.current) clearInterval(demoRef.current);
     };
-  }, [id, refreshRoute, handleGps]);
+  }, [id, refreshRoute]);
 
-  // ── Demo mode ──────────────────────────────────────────────────────────
+  // Real GPS — paused during demo so simulated path is not overwritten
+  useEffect(() => {
+    if (!id || demoMode || !navigator.geolocation) return;
+
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const rawHeading = pos.coords.heading;
+        const heading = rawHeading != null && Number.isFinite(rawHeading) ? rawHeading : undefined;
+        handleGps(
+          { lat: pos.coords.latitude, lng: pos.coords.longitude },
+          heading,
+          routeRef.current,
+          activeIdxRef.current,
+        );
+      },
+      () => { /* permission denied — user can use Demo Mode */ },
+      { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 },
+    );
+
+    return () => { navigator.geolocation.clearWatch(watchId); };
+  }, [id, demoMode, handleGps]);
+
+  useEffect(() => {
+    if (!demoMode) {
+      lastDemoLegRef.current = null;
+      demoProgressRef.current = 0;
+    }
+  }, [demoMode]);
+
+  // ── Demo mode — simulates travel along the active leg only ───────────
   useEffect(() => {
     if (demoRef.current) { clearInterval(demoRef.current); demoRef.current = null; }
     if (!demoMode || !route) return;
 
-    const allGeo: [number, number][] = [];
-    for (const stop of route.stops) {
-      if (stop.geometry) allGeo.push(...stop.geometry);
-    }
-    if (allGeo.length === 0) return;
+    const activeStop = route.stops[activeIdx];
+    if (!activeStop || activeStop.status === "complete") return;
 
-    demoProgressRef.current = 0;
-    let localIdx = activeIdx;
-    let elapsedSec = 0;
-    const durationSec = demoDurationSec(route, allGeo);
+    const legGeo = activeStop.geometry ?? [];
+    if (legGeo.length === 0) return;
+
+    const legKey = activeStop.id;
+    if (lastDemoLegRef.current !== legKey) {
+      lastDemoLegRef.current = legKey;
+      demoProgressRef.current = 0;
+      prevPosRef.current = null;
+    }
+
+    let elapsedSec = demoProgressRef.current * demoLegDurationSec(activeStop, legGeo);
+    const durationSec = demoLegDurationSec(activeStop, legGeo);
+
+    const tick = (r: RouteDetail, idx: number) => {
+      const pos = interpolatePath(legGeo, demoProgressRef.current);
+      handleGps(pos, headingFromPath(legGeo, demoProgressRef.current), r, idx);
+      void processDemoStopActions(pos, r, idx, demoProgressRef.current >= 1);
+    };
+
+    tick(route, activeIdx);
 
     demoRef.current = setInterval(() => {
-      elapsedSec += DEMO_TICK_MS / 1000;
+      const r = routeRef.current;
+      const idx = activeIdxRef.current;
+      if (!r) return;
+
+      const stop = r.stops[idx];
+      if (!stop || stop.status === "complete") {
+        clearInterval(demoRef.current!);
+        demoRef.current = null;
+        return;
+      }
+
+      elapsedSec += (DEMO_TICK_MS / 1000) * demoSpeedRef.current;
       demoProgressRef.current = Math.min(elapsedSec / durationSec, 1);
-      const pos = interpolatePath(allGeo, demoProgressRef.current);
-      handleGps(pos, undefined, route, localIdx);
-      if (demoProgressRef.current >= 1) { clearInterval(demoRef.current!); demoRef.current = null; }
+      tick(r, idx);
     }, DEMO_TICK_MS);
 
     return () => { if (demoRef.current) { clearInterval(demoRef.current); demoRef.current = null; } };
-  }, [demoMode, route]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [demoMode, route, activeIdx, handleGps, processDemoStopActions]);
 
   // ── Stop actions ──────────────────────────────────────────────────────
   const handleArrive = async (stop: RouteStopDetail) => {
@@ -402,7 +517,12 @@ export function DriverView() {
           )}
         </div>
         <button
-          onClick={() => setDemoMode((v) => !v)}
+          onClick={() => {
+            setDemoMode((v) => {
+              if (v) setDemoSpeed(1);
+              return !v;
+            });
+          }}
           style={{
             background: demoMode ? "#da291c" : "rgba(255,255,255,.15)",
             color: "#fff", border: "none", borderRadius: 6,
@@ -412,6 +532,25 @@ export function DriverView() {
         >
           {demoMode ? "Stop" : "Demo"}
         </button>
+        {demoMode && (
+          <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+            {DEMO_SPEED_OPTIONS.map((speed) => (
+              <button
+                key={speed}
+                onClick={() => setDemoSpeed(speed)}
+                style={{
+                  background: demoSpeed === speed ? "#fff" : "rgba(255,255,255,.12)",
+                  color: demoSpeed === speed ? "#004b87" : "#fff",
+                  border: "none", borderRadius: 6,
+                  padding: ".35rem .55rem", fontWeight: 800, fontSize: ".72rem",
+                  cursor: "pointer", minHeight: 36, minWidth: 36,
+                }}
+              >
+                {speed}×
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ── Map (fills all remaining space above bottom card) ───────── */}
@@ -423,7 +562,13 @@ export function DriverView() {
           activeStopId={activeStop?.id}
           clusterMeters={route.clusterMeters}
           followDriver
+          mapThemeId={themeId}
           style={{ width: "100%", height: "100%" }}
+        />
+        <MapThemeSelector
+          themeId={themeId}
+          onChange={setThemeId}
+          variant="overlay"
         />
         {/* No GPS overlay */}
         {!driverPos && (
