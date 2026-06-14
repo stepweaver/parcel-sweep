@@ -1,0 +1,27 @@
+# Dependencies (large; not useful for AI context)
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+.vite/
+
+# Secrets and local env overrides
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# Runtime SQLite database
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+logs/
+*.log
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.cursor/
