@@ -66,13 +66,10 @@ export async function resolveDepot(route: RouteRow): Promise<LatLng> {
   if (route.start_lat && route.start_lng) {
     return { lat: route.start_lat, lng: route.start_lng };
   }
-  const googleApiKey = process.env.GOOGLE_GEOCODING_API_KEY;
-  if (!googleApiKey) {
-    throw new Error("GOOGLE_GEOCODING_API_KEY required to geocode start address.");
-  }
-  const { geocodeAll } = await import("./geocoder.js");
-  const { start } = await geocodeAll(route.start_address, [], googleApiKey);
-  return { lat: start.lat, lng: start.lng };
+  const { resolveAddressCoords } = await import("./geocoder.js");
+  const { lat, lng, source } = await resolveAddressCoords(route.start_address);
+  console.log(`[route] Geocoded depot via ${source}: ${route.start_address}`);
+  return { lat, lng };
 }
 
 /**

@@ -8,6 +8,7 @@ import cors from "cors";
 import { Server as SocketServer } from "socket.io";
 
 import { getDb } from "./db/index.js";
+import { isGoogleGeocodingConfigured } from "./services/geocoder.js";
 import { optimizeRouteRouter } from "./routes/optimizeRoute.js";
 import { manifestsRouter } from "./routes/manifests.js";
 import { createRoutesRouter } from "./routes/routes.js";
@@ -48,7 +49,15 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
 
 // ── HTTP Routes ──────────────────────────────────────────────
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok", service: "parcel-sweep" });
+  res.json({
+    status: "ok",
+    service: "parcel-sweep",
+    config: {
+      googleGeocoding: isGoogleGeocodingConfigured(),
+      geocodingFallback: "nominatim",
+      osrm: process.env.OSRM_BASE_URL ?? "http://router.project-osrm.org",
+    },
+  });
 });
 
 app.use("/api/optimize-route", optimizeRouteRouter);
@@ -128,6 +137,7 @@ httpServer.listen(PORT, () => {
   console.log(`  POST  /api/routes/:id/optimize`);
   console.log(`  GET   /api/routes/:id/load-order`);
   console.log(`  GET   /api/routes/:id/export/{gpx,kml,csv}`);
+  console.log(`  Geocoding:   ${isGoogleGeocodingConfigured() ? "Google API key set" : "Google not set — using OpenStreetMap fallback"}`);
   console.log(`  WebSocket /socket.io\n`);
 });
 

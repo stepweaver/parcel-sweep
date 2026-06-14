@@ -106,7 +106,7 @@ export function createRoutesRouter(io: SocketServer): Router {
   });
 
   // ── POST /api/routes ──────────────────────────────────────
-  router.post("/", (req: Request, res: Response, next: NextFunction): void => {
+  router.post("/", async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const {
         manifestId, startAddress, driverName = "Driver",
@@ -122,16 +122,31 @@ export function createRoutesRouter(io: SocketServer): Router {
       const manifest = queryOne(db.prepare(`SELECT id FROM manifests WHERE id = ?`), manifestId);
       if (!manifest) { res.status(404).json({ error: "Manifest not found." }); return; }
 
+      const { resolveAddressCoords } = await import("../services/geocoder.js");
+      let startLat: number | null = null;
+      let startLng: number | null = null;
+      try {
+        const coords = await resolveAddressCoords(startAddress.trim());
+        startLat = coords.lat;
+        startLng = coords.lng;
+        console.log(`[route] Depot geocoded via ${coords.source} on create`);
+      } catch (err) {
+        console.warn(
+          "[route] Could not geocode depot on create:",
+          err instanceof Error ? err.message : err
+        );
+      }
+
       const routeId = uuidv4();
       exec(
         db.prepare(`
           INSERT INTO routes
             (id, manifest_id, driver_name, vehicle_id, status, start_address,
-             cluster_meters, alert_meters, created_at)
-          VALUES (?, ?, ?, ?, 'loading', ?, ?, ?, ?)
+             start_lat, start_lng, cluster_meters, alert_meters, created_at)
+          VALUES (?, ?, ?, ?, 'loading', ?, ?, ?, ?, ?, ?)
         `),
-        routeId, manifestId, driverName, vehicleId ?? null, startAddress,
-        clusterMeters, alertMeters, new Date().toISOString()
+        routeId, manifestId, driverName, vehicleId ?? null, startAddress.trim(),
+        startLat, startLng, clusterMeters, alertMeters, new Date().toISOString()
       );
       res.status(201).json(buildRouteDetail(routeId));
     } catch (err) { next(err); }

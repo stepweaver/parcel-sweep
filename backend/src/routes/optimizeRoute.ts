@@ -41,20 +41,13 @@ optimizeRouteRouter.post(
       const clusterMeters = body.clusterMeters ?? DEFAULT_CLUSTER_METERS;
       const alertMeters = body.alertMeters ?? DEFAULT_ALERT_METERS;
 
-      const googleApiKey = process.env.GOOGLE_GEOCODING_API_KEY;
-      if (!googleApiKey) {
-        res.status(500).json({ error: "GOOGLE_GEOCODING_API_KEY is not configured." });
-        return;
-      }
-
       const osrmBaseUrl =
         process.env.OSRM_BASE_URL ?? "http://router.project-osrm.org";
 
-      // --- 1. Geocode all addresses ---
+      // --- 1. Geocode all addresses (Google if configured, else OpenStreetMap) ---
       const { start, stops: geocodedStops } = await geocodeAll(
         body.startAddress,
-        body.stops,
-        googleApiKey
+        body.stops
       );
 
       // --- 2. Cluster stops by proximity ---
