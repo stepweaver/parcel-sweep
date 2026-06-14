@@ -3,7 +3,6 @@ import {
   googleMapsStopUrl,
   wazeStopUrl,
   appleMapsStopUrl,
-  openExternal,
   type NavTarget,
 } from "../utils/navigationLinks";
 
@@ -35,15 +34,16 @@ export function NavigateButtons({ target, size = "md", showLabels = true }: Navi
   return (
     <div style={{ display: "flex", gap: ".4rem", flexWrap: "wrap" }}>
       {buttons.map((b) => (
-        <button
+        <a
           key={b.label}
-          type="button"
-          style={{ ...BTN, padding: pad, fontSize }}
-          onClick={() => openExternal(b.url)}
+          href={b.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ ...BTN, padding: pad, fontSize, textDecoration: "none", display: "inline-block" }}
           title={`Navigate with ${b.label} Maps`}
         >
           {showLabels ? b.label : "→"}
-        </button>
+        </a>
       ))}
     </div>
   );

@@ -7,22 +7,49 @@ export interface NavTarget {
   address?: string;
 }
 
+function hasCoords(target: NavTarget): boolean {
+  return Number.isFinite(target.lat) && Number.isFinite(target.lng);
+}
+
+function coordDest(target: NavTarget): string {
+  return `${target.lat},${target.lng}`;
+}
+
 export function googleMapsStopUrl(target: NavTarget): string {
-  const dest = target.lat && target.lng
-    ? `${target.lat},${target.lng}`
-    : encodeURIComponent(target.address ?? "");
-  return `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=driving`;
+  const params = new URLSearchParams({
+    api: "1",
+    travelmode: "driving",
+  });
+  if (hasCoords(target)) {
+    params.set("destination", coordDest(target));
+  } else if (target.address) {
+    params.set("destination", target.address);
+  }
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
 }
 
 export function wazeStopUrl(target: NavTarget): string {
-  return `https://waze.com/ul?ll=${target.lat},${target.lng}&navigate=yes`;
+  const params = new URLSearchParams({ navigate: "yes" });
+  if (hasCoords(target)) {
+    params.set("ll", coordDest(target));
+  } else if (target.address) {
+    params.set("q", target.address);
+  }
+  return `https://waze.com/ul?${params.toString()}`;
 }
 
+/**
+ * Apple unified Maps URLs (iOS 18.4+). Legacy ?daddr=lat,lng links no longer
+ * open navigation reliably on recent iOS versions.
+ */
 export function appleMapsStopUrl(target: NavTarget): string {
-  const dest = target.lat && target.lng
-    ? `${target.lat},${target.lng}`
-    : encodeURIComponent(target.address ?? "");
-  return `https://maps.apple.com/?daddr=${dest}&dirflg=d`;
+  const params = new URLSearchParams({ mode: "driving" });
+  if (hasCoords(target)) {
+    params.set("destination", coordDest(target));
+  } else if (target.address) {
+    params.set("destination", target.address);
+  }
+  return `https://maps.apple.com/directions?${params.toString()}`;
 }
 
 /**
@@ -50,6 +77,13 @@ export function googleMapsFullRouteUrl(
   return `https://www.google.com/maps/dir/?${params.toString()}`;
 }
 
+/** Open an external navigation URL (anchor click is more reliable than window.open on mobile). */
 export function openExternal(url: string): void {
-  window.open(url, "_blank", "noopener,noreferrer");
+  const link = document.createElement("a");
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
 }
