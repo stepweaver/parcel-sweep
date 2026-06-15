@@ -285,86 +285,33 @@ a:hover { color: var(--usps-blue-light); text-decoration: none; }
 /* ── Footer ─────────────────────────────────────────────────────────────── */
 
 .app-footer {
-  margin-top: auto;
-  border-top: 1px solid var(--nav-border);
-  background: var(--nav-bg);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  padding: 0.65rem 1.5rem 1.25rem;
+  text-align: center;
 }
 
-.app-footer-inner {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 1rem 1.5rem;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
-}
-
-.app-footer-brand {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  flex-wrap: wrap;
-  font-family: var(--font-ibm);
-  font-size: 0.68rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-
-.app-footer-lambda {
+.app-footer-credit {
   display: inline-flex;
   align-items: center;
-  gap: 0.45rem;
-  color: var(--usps-blue);
+  gap: 0.4rem;
+  font-family: var(--font-ibm);
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  color: var(--text-meta);
   text-decoration: none;
-  font-family: var(--font-ocr);
-  font-size: 0.72rem;
-  letter-spacing: 0.12em;
-}
-
-.app-footer-lambda:hover {
-  color: var(--usps-blue-light);
 }
 
 .app-footer-logo {
   display: block;
   border-radius: var(--radius);
+  opacity: 0.85;
 }
 
-.app-footer-sep {
-  color: var(--text-meta);
-}
-
-.app-footer-credit a {
-  color: var(--usps-blue);
-  font-weight: 600;
-}
-
-.app-footer-year {
-  color: var(--text-meta);
-}
-
-.app-footer-links {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  font-family: var(--font-ibm);
-  font-size: 0.68rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.app-footer-links a {
+.app-footer-credit:hover {
   color: var(--text-muted);
-  text-decoration: none;
 }
 
-.app-footer-links a:hover {
-  color: var(--usps-blue);
+.app-footer-credit:hover .app-footer-logo {
+  opacity: 1;
 }
 
 /* ── Buttons ────────────────────────────────────────────────────────────── */
@@ -1006,11 +953,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
     width: 100%;
     justify-content: flex-end;
   }
-  .app-footer-inner {
-    flex-direction: column;
-    align-items: flex-start;
-    padding: 0.85rem 1rem;
-  }
+  .app-footer { padding: 0.5rem 1rem 1rem; }
   .page { padding: 1.25rem 1rem 2rem; }
   .card { padding: 1rem; }
   .page-header__actions {
