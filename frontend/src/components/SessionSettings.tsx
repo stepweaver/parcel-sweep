@@ -6,6 +6,7 @@ import {
   getRecentDrivers,
   rememberDriver,
 } from "../config/operations";
+import { FriendlyInput } from "./FriendlyInput";
 
 interface SessionSettingsProps {
   route: RouteDetail;
@@ -83,7 +84,7 @@ export function SessionSettings({ route, onUpdated }: SessionSettingsProps) {
         </label>
         <label>
           <div style={{ fontWeight: 600, marginBottom: ".25rem", fontSize: ".9rem" }}>Driver</div>
-          <input
+          <FriendlyInput
             type="text"
             list="driver-suggestions"
             value={driverName}
@@ -100,7 +101,7 @@ export function SessionSettings({ route, onUpdated }: SessionSettingsProps) {
       {stationId === "custom" && (
         <label style={{ display: "block", marginBottom: ".75rem" }}>
           <div style={{ fontWeight: 600, marginBottom: ".25rem", fontSize: ".9rem" }}>Custom station address</div>
-          <input
+          <FriendlyInput
             type="text"
             value={customAddress}
             onChange={(e) => setCustomAddress(e.target.value)}

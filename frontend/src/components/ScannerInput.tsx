@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { FriendlyInput } from "./FriendlyInput";
 
 interface ScannerInputProps {
   onScan: (trackingNumber: string) => void;
@@ -20,7 +21,7 @@ export function ScannerInput({ onScan, disabled, placeholder = "Scan or type tra
 
   return (
     <div className="scanner-input">
-      <input
+      <FriendlyInput
         ref={inputRef}
         type="text"
         value={value}

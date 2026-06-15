@@ -1,4 +1,5 @@
 import type { RouteProposal } from "../api";
+import { FriendlyInput } from "./FriendlyInput";
 import { ProposalRouteMap } from "./ProposalRouteMap";
 
 interface RouteProposalCardProps {
@@ -87,7 +88,7 @@ export function RouteProposalCard({
         <div className="proposal-card__form">
           <label>
             <span className="proposal-card__field-label">Route number</span>
-            <input
+            <FriendlyInput
               type="text"
               value={routeNumber}
               onChange={(e) => onRouteNumberChange(e.target.value)}
@@ -96,7 +97,7 @@ export function RouteProposalCard({
           </label>
           <label>
             <span className="proposal-card__field-label">Driver</span>
-            <input
+            <FriendlyInput
               type="text"
               list="proposal-driver-suggestions"
               value={driverName}

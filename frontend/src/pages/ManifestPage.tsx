@@ -9,6 +9,7 @@ import {
   type RouteSummary,
 } from "../api";
 import { PackageList } from "../components/PackageList";
+import { FriendlyInput, FriendlyNumberInput } from "../components/FriendlyInput";
 import { RouteProposalCard } from "../components/RouteProposalCard";
 import {
   DEFAULT_STATION,
@@ -220,10 +221,11 @@ export function ManifestPage() {
 
           <label style={{ display: "block", marginBottom: ".75rem" }}>
             <div style={{ fontWeight: 600, marginBottom: ".25rem" }}>ZIP Code</div>
-            <input
+            <FriendlyInput
               type="text"
+              inputMode="numeric"
               value={zipCode}
-              onChange={(e) => setZipCode(e.target.value)}
+              onChange={(e) => setZipCode(e.target.value.replace(/\D/g, "").slice(0, 5))}
               placeholder="5-digit ZIP"
               maxLength={5}
             />
@@ -231,11 +233,11 @@ export function ManifestPage() {
 
           <label style={{ display: "block", marginBottom: "1rem" }}>
             <div style={{ fontWeight: 600, marginBottom: ".25rem" }}>Number of Packages (1–200)</div>
-            <input
-              type="number"
+            <FriendlyNumberInput
               value={count}
-              min={1} max={200}
-              onChange={(e) => setCount(Number(e.target.value))}
+              min={1}
+              max={200}
+              onChange={setCount}
             />
           </label>
 
@@ -396,12 +398,11 @@ export function ManifestPage() {
           </label>
           <label>
             <div style={{ fontWeight: 600, marginBottom: ".25rem", fontSize: ".9rem" }}>Available drivers</div>
-            <input
-              type="number"
+            <FriendlyNumberInput
+              value={driverCount}
               min={1}
               max={20}
-              value={driverCount}
-              onChange={(e) => setDriverCount(Math.max(1, Number(e.target.value)))}
+              onChange={setDriverCount}
             />
           </label>
         </div>
@@ -409,7 +410,7 @@ export function ManifestPage() {
         {stationId === "custom" && (
           <label style={{ display: "block", marginTop: ".75rem" }}>
             <div style={{ fontWeight: 600, marginBottom: ".25rem", fontSize: ".9rem" }}>Custom station address</div>
-            <input
+            <FriendlyInput
               type="text"
               value={customAddress}
               onChange={(e) => setCustomAddress(e.target.value)}
