@@ -5,7 +5,7 @@ import { api, type RouteDetail, type RouteStopDetail } from "../api";
 import { DeliveryMap } from "../components/DeliveryMap";
 import { MapThemeSelector } from "../components/MapThemeSelector";
 import { ThemeSelector } from "../components/ThemeSelector";
-import { AlertBanner, type ActiveAlert } from "../components/AlertBanner";
+import { AlertBanner, BlockingAlertOverlay, type ActiveAlert, type BlockingAlert } from "../components/AlertBanner";
 import { useMapTheme } from "../hooks/useMapTheme";
 import { NavigateButtons } from "../components/NavigateButtons";
 import { joinRoute, leaveRoute, onStopCompleted, onRouteComplete } from "../socket";
@@ -72,6 +72,29 @@ const DEMO_TICK_MS = 200;
 const DEMO_SPEED_OPTIONS = [1, 2, 4] as const;
 type DemoSpeed = (typeof DEMO_SPEED_OPTIONS)[number];
 
+type RouteState = "IDLE" | "EN_ROUTE" | "ARRIVED_BLOCKED" | "SERVICING_CLUSTER";
+const SNOOZE_MS = 2 * 60 * 1000;
+
+function isStopAvailable(
+  stop: RouteStopDetail,
+  completed: Set<string>,
+  skipped: Set<string>,
+): boolean {
+  return stop.status !== "complete" && !completed.has(stop.clusterId) && !skipped.has(stop.clusterId);
+}
+
+function findNextStopIndex(
+  r: RouteDetail,
+  completed: Set<string>,
+  skipped: Set<string>,
+): number {
+  return r.stops.findIndex((s) => isStopAvailable(s, completed, skipped));
+}
+
+function findStopByClusterId(r: RouteDetail, clusterId: string): RouteStopDetail | undefined {
+  return r.stops.find((s) => s.clusterId === clusterId);
+}
+
 function estimatePathDurationSec(geo: [number, number][]): number {
   let meters = 0;
   for (let i = 1; i < geo.length; i++) {
@@ -128,19 +151,34 @@ export function DriverView() {
   const lastHeadingRef = useRef<number | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
   const [activeAlert, setActiveAlert] = useState<ActiveAlert | null>(null);
+  const [routeState, setRouteState] = useState<RouteState>("IDLE");
+  const [blockingAlert, setBlockingAlert] = useState<BlockingAlert | null>(null);
+  const [lockedClusterId, setLockedClusterId] = useState<string | null>(null);
+  const [completedClusterIds, setCompletedClusterIds] = useState<Set<string>>(() => new Set());
+  const [skippedClusterIds, setSkippedClusterIds] = useState<Set<string>>(() => new Set());
 
   const [demoMode, setDemoMode] = useState(false);
   const [demoSpeed, setDemoSpeed] = useState<DemoSpeed>(1);
   const demoRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const demoProgressRef = useRef(0);
   const demoSpeedRef = useRef<DemoSpeed>(1);
-  const demoActionBusyRef = useRef(false);
   const lastDemoLegRef = useRef<string | null>(null);
   demoSpeedRef.current = demoSpeed;
   const routeRef = useRef<RouteDetail | null>(null);
   const activeIdxRef = useRef(0);
+  const routeStateRef = useRef<RouteState>("IDLE");
+  const blockingAlertRef = useRef<BlockingAlert | null>(null);
+  const lockedClusterIdRef = useRef<string | null>(null);
+  const completedClusterIdsRef = useRef<Set<string>>(new Set());
+  const skippedClusterIdsRef = useRef<Set<string>>(new Set());
+  const snoozeUntilRef = useRef(0);
   routeRef.current = route;
   activeIdxRef.current = activeIdx;
+  routeStateRef.current = routeState;
+  blockingAlertRef.current = blockingAlert;
+  lockedClusterIdRef.current = lockedClusterId;
+  completedClusterIdsRef.current = completedClusterIds;
+  skippedClusterIdsRef.current = skippedClusterIds;
 
   // Track which alert zones have already fired (keyed by `${stopId}:${zone}`)
   const firedZonesRef = useRef<Set<string>>(new Set());
@@ -153,10 +191,17 @@ export function DriverView() {
     const r = await api.routes.get(id);
     routeRef.current = r;
     setRoute(r);
-    const next = r.stops.findIndex((s) => s.status === "pending");
-    if (next >= 0) {
-      activeIdxRef.current = next;
-      setActiveIdx(next);
+    if (!lockedClusterIdRef.current) {
+      const next = findNextStopIndex(r, completedClusterIdsRef.current, skippedClusterIdsRef.current);
+      if (next >= 0) {
+        activeIdxRef.current = next;
+        setActiveIdx(next);
+        routeStateRef.current = "EN_ROUTE";
+        setRouteState("EN_ROUTE");
+      } else {
+        routeStateRef.current = "IDLE";
+        setRouteState("IDLE");
+      }
     }
     if (r.status === "complete") setRouteComplete(true);
   }, [id]);
@@ -170,9 +215,11 @@ export function DriverView() {
       routeRef.current = r;
       setRoute(r);
       if (r.status === "complete") setRouteComplete(true);
-      const next = r.stops.findIndex((s) => s.status === "pending");
+      const next = findNextStopIndex(r, completedClusterIdsRef.current, skippedClusterIdsRef.current);
       activeIdxRef.current = next >= 0 ? next : 0;
       setActiveIdx(next >= 0 ? next : 0);
+      routeStateRef.current = next >= 0 ? "EN_ROUTE" : "IDLE";
+      setRouteState(next >= 0 ? "EN_ROUTE" : "IDLE");
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -180,61 +227,67 @@ export function DriverView() {
     }
   }, [id]);
 
-  /** Demo mirrors production: auto-arrive at the arriving zone, auto-deliver at the stop. */
-  const processDemoStopActions = useCallback(async (
-    pos: { lat: number; lng: number },
-    r: RouteDetail,
-    currIdx: number,
-    atLegEnd: boolean,
-  ) => {
-    if (!demoMode || !id || demoActionBusyRef.current) return;
+  const fireAlert = useCallback((alert: ActiveAlert) => {
+    if (blockingAlertRef.current) return;
+    setActiveAlert(alert);
+    notifyProximityAlert(alert);
+  }, []);
 
-    const stop = routeRef.current?.stops[currIdx] ?? r.stops[currIdx];
-    if (!stop || stop.status === "complete") return;
+  const fireBlockingAlert = useCallback((stop: RouteStopDetail) => {
+    const alert: BlockingAlert = {
+      id: uuidv4(),
+      clusterId: stop.clusterId,
+      level: "arriving",
+      lines: [
+        `Stop #${stop.sequenceNumber}`,
+        stop.packages[0]?.address ?? "Unknown address",
+        `${stop.packages.reduce((s, p) => s + p.packageCount, 0)} package(s)`,
+      ],
+    };
+    blockingAlertRef.current = alert;
+    setBlockingAlert(alert);
+    notifyProximityAlert({ id: alert.id, level: "arriving", lines: alert.lines });
+  }, []);
 
-    const dist = haversine(pos, stop.centroid);
+  const clearClusterLock = useCallback(() => {
+    lockedClusterIdRef.current = null;
+    setLockedClusterId(null);
+    blockingAlertRef.current = null;
+    setBlockingAlert(null);
+    snoozeUntilRef.current = 0;
+  }, []);
 
-    if (stop.status === "pending" && (dist <= ZONE_ARRIVING || atLegEnd)) {
-      demoActionBusyRef.current = true;
-      try {
-        await api.routes.stopArrive(id, stop.id);
-        if (atLegEnd) {
-          await api.routes.stopComplete(id, stop.id);
-          firedZonesRef.current = new Set();
-          await refreshRoute();
-        } else {
-          setRoute((prev) => {
-            if (!prev) return prev;
-            const updated = {
-              ...prev,
-              stops: prev.stops.map((s) =>
-                s.id === stop.id
-                  ? { ...s, status: "arrived" as const, arrivedAt: new Date().toISOString() }
-                  : s,
-              ),
-            };
-            routeRef.current = updated;
-            return updated;
-          });
-        }
-      } finally {
-        demoActionBusyRef.current = false;
-      }
-      return;
+  const advanceToNextCluster = useCallback((r: RouteDetail) => {
+    clearClusterLock();
+    firedZonesRef.current = new Set();
+    const next = findNextStopIndex(r, completedClusterIdsRef.current, skippedClusterIdsRef.current);
+    if (next >= 0) {
+      activeIdxRef.current = next;
+      setActiveIdx(next);
+      routeStateRef.current = "EN_ROUTE";
+      setRouteState("EN_ROUTE");
+      demoProgressRef.current = 0;
+      lastDemoLegRef.current = null;
+    } else {
+      routeStateRef.current = "IDLE";
+      setRouteState("IDLE");
     }
+  }, [clearClusterLock]);
 
-    const liveStop = routeRef.current?.stops[currIdx] ?? stop;
-    if (liveStop.status === "arrived" && atLegEnd) {
-      demoActionBusyRef.current = true;
-      try {
-        await api.routes.stopComplete(id, liveStop.id);
-        firedZonesRef.current = new Set();
-        await refreshRoute();
-      } finally {
-        demoActionBusyRef.current = false;
-      }
+  const lockCluster = useCallback((stop: RouteStopDetail) => {
+    if (lockedClusterIdRef.current === stop.clusterId && blockingAlertRef.current) return;
+
+    lockedClusterIdRef.current = stop.clusterId;
+    setLockedClusterId(stop.clusterId);
+    const idx = routeRef.current?.stops.findIndex((s) => s.id === stop.id) ?? -1;
+    if (idx >= 0) {
+      activeIdxRef.current = idx;
+      setActiveIdx(idx);
     }
-  }, [demoMode, id, refreshRoute]);
+    routeStateRef.current = "ARRIVED_BLOCKED";
+    setRouteState("ARRIVED_BLOCKED");
+    fireBlockingAlert(stop);
+  }, [fireBlockingAlert]);
 
   // ── Screen Wake Lock + notification permission ─────────────────────────
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
@@ -247,75 +300,112 @@ export function DriverView() {
     return () => { wakeLockRef.current?.release().catch(() => {}); };
   }, []);
 
-  const fireAlert = useCallback((alert: ActiveAlert) => {
-    setActiveAlert(alert);
-    notifyProximityAlert(alert);
-  }, []);
-
   // ── Proximity engine ────────────────────────────────────────────────────
   const checkProximity = useCallback((pos: { lat: number; lng: number }, r: RouteDetail, currentIdx: number) => {
-    const pendingStops = r.stops.filter((s) => s.status === "pending");
-    const currentStop = r.stops[currentIdx] ?? pendingStops[0];
+    const locked = lockedClusterIdRef.current;
+    const state = routeStateRef.current;
+    const blocking = blockingAlertRef.current;
+    const completed = completedClusterIdsRef.current;
+    const skipped = skippedClusterIdsRef.current;
 
-    if (currentStop) {
-      const dist = haversine(pos, currentStop.centroid);
-      const sid = currentStop.id;
+    if (locked) {
+      const lockedStop = findStopByClusterId(r, locked);
+      if (!lockedStop) return;
 
-      if (dist < ZONE_ARRIVING && !firedZonesRef.current.has(`${sid}:arriving`)) {
-        firedZonesRef.current.add(`${sid}:arriving`);
-        fireAlert({
-          id: uuidv4(),
-          level: "arriving",
-          lines: [
-            `Stop #${currentStop.sequenceNumber}`,
-            currentStop.packages[0]?.address ?? "Unknown address",
-            `${currentStop.packages.reduce((s, p) => s + p.packageCount, 0)} package(s)`,
-          ],
-        });
-      } else if (dist < ZONE_ALERT && !firedZonesRef.current.has(`${sid}:alert`)) {
-        firedZonesRef.current.add(`${sid}:alert`);
-        fireAlert({
-          id: uuidv4(),
-          level: "alert",
-          lines: [
-            `Stop #${currentStop.sequenceNumber} · ${fmtDist(dist)} ahead`,
-            currentStop.packages[0]?.address ?? "Unknown address",
-          ],
-        });
-      } else if (dist < ZONE_WARNING && !firedZonesRef.current.has(`${sid}:warning`)) {
-        firedZonesRef.current.add(`${sid}:warning`);
+      const dist = haversine(pos, lockedStop.centroid);
+
+      if (
+        dist > ZONE_ARRIVING
+        && isStopAvailable(lockedStop, completed, skipped)
+        && !firedZonesRef.current.has(`${locked}:departing`)
+      ) {
+        firedZonesRef.current.add(`${locked}:departing`);
         fireAlert({
           id: uuidv4(),
           level: "warning",
           lines: [
-            `Stop #${currentStop.sequenceNumber} in ${fmtDist(dist)}`,
-            currentStop.packages[0]?.address ?? "Unknown address",
+            "You are leaving an unfinished package cluster.",
+            lockedStop.packages[0]?.address ?? "Unknown address",
           ],
         });
+      } else if (dist <= ZONE_ARRIVING) {
+        firedZonesRef.current.delete(`${locked}:departing`);
       }
+
+      if (
+        !blocking
+        && state === "SERVICING_CLUSTER"
+        && snoozeUntilRef.current > 0
+        && Date.now() >= snoozeUntilRef.current
+        && dist <= ZONE_ARRIVING
+        && isStopAvailable(lockedStop, completed, skipped)
+      ) {
+        snoozeUntilRef.current = 0;
+        routeStateRef.current = "ARRIVED_BLOCKED";
+        setRouteState("ARRIVED_BLOCKED");
+        fireBlockingAlert(lockedStop);
+      }
+      return;
     }
 
-    // Check nearby stops later in the delivery sequence only
+    if (blocking) return;
+
+    const pendingStops = r.stops.filter((s) => isStopAvailable(s, completed, skipped));
+    const currentStop = r.stops[currentIdx] ?? pendingStops[0];
+    if (!currentStop || !isStopAvailable(currentStop, completed, skipped)) return;
+
+    const dist = haversine(pos, currentStop.centroid);
+    const sid = currentStop.id;
+
+    if (dist <= ZONE_ARRIVING && state === "EN_ROUTE") {
+      lockCluster(currentStop);
+      return;
+    }
+
+    if (state !== "EN_ROUTE") return;
+
+    if (dist < ZONE_ALERT && !firedZonesRef.current.has(`${sid}:alert`)) {
+      firedZonesRef.current.add(`${sid}:alert`);
+      fireAlert({
+        id: uuidv4(),
+        level: "alert",
+        lines: [
+          `Stop #${currentStop.sequenceNumber} · ${fmtDist(dist)} ahead`,
+          currentStop.packages[0]?.address ?? "Unknown address",
+        ],
+      });
+    } else if (dist < ZONE_WARNING && !firedZonesRef.current.has(`${sid}:warning`)) {
+      firedZonesRef.current.add(`${sid}:warning`);
+      fireAlert({
+        id: uuidv4(),
+        level: "warning",
+        lines: [
+          `Stop #${currentStop.sequenceNumber} in ${fmtDist(dist)}`,
+          currentStop.packages[0]?.address ?? "Unknown address",
+        ],
+      });
+    }
+
     const alertMeters = r.alertMeters;
     for (const stop of pendingStops) {
       if (stop === currentStop) continue;
       if (currentStop && stop.sequenceNumber <= currentStop.sequenceNumber) continue;
-      const dist = haversine(pos, stop.centroid);
-      if (dist < alertMeters && !firedZonesRef.current.has(`${stop.id}:nearby`)) {
+      const nearbyDist = haversine(pos, stop.centroid);
+      if (nearbyDist < alertMeters && !firedZonesRef.current.has(`${stop.id}:nearby`)) {
         firedZonesRef.current.add(`${stop.id}:nearby`);
         fireAlert({
           id: uuidv4(),
           level: "nearby",
           lines: [
-            `${fmtDist(dist)} away · Stop #${stop.sequenceNumber}`,
+            `${fmtDist(nearbyDist)} away · Stop #${stop.sequenceNumber}`,
             stop.packages[0]?.address ?? "Unknown address",
             `${stop.packages.reduce((s, p) => s + p.packageCount, 0)} pkg(s) — consider delivering now`,
           ],
         });
-        break; // one nearby alert at a time
+        break;
       }
     }
-  }, [fireAlert]);
+  }, [fireAlert, fireBlockingAlert, lockCluster]);
 
   // ── Unified GPS handler ────────────────────────────────────────────────
   const handleGps = useCallback((
@@ -456,18 +546,19 @@ export function DriverView() {
       const pos = interpolatePath(legGeo, demoProgressRef.current);
       if (!pos) return;
       handleGps(pos, headingFromPath(legGeo, demoProgressRef.current), r, idx);
-      void processDemoStopActions(pos, r, idx, demoProgressRef.current >= 1);
     };
 
     tick(route, activeIdx);
 
     demoRef.current = setInterval(() => {
+      if (blockingAlertRef.current) return;
+
       const r = routeRef.current;
       const idx = activeIdxRef.current;
       if (!r) return;
 
       const stop = r.stops[idx];
-      if (!stop || stop.status === "complete") {
+      if (!stop || !isStopAvailable(stop, completedClusterIdsRef.current, skippedClusterIdsRef.current)) {
         clearInterval(demoRef.current!);
         demoRef.current = null;
         return;
@@ -479,32 +570,103 @@ export function DriverView() {
     }, DEMO_TICK_MS);
 
     return () => { if (demoRef.current) { clearInterval(demoRef.current); demoRef.current = null; } };
-  }, [demoMode, route, activeIdx, handleGps, processDemoStopActions]);
+  }, [demoMode, route, activeIdx, handleGps]);
 
   // ── Stop actions ──────────────────────────────────────────────────────
+  const handleBlockingAcknowledge = useCallback(async () => {
+    if (!id || !route) return;
+    const clusterId = lockedClusterIdRef.current;
+    if (!clusterId) return;
+    const stop = findStopByClusterId(route, clusterId);
+    if (!stop) return;
+
+    blockingAlertRef.current = null;
+    setBlockingAlert(null);
+    routeStateRef.current = "SERVICING_CLUSTER";
+    setRouteState("SERVICING_CLUSTER");
+    snoozeUntilRef.current = 0;
+
+    if (stop.status === "pending") {
+      await api.routes.stopArrive(id, stop.id);
+      await refreshRoute();
+    }
+  }, [id, route, refreshRoute]);
+
+  const handleBlockingComplete = useCallback(async () => {
+    if (!id || !route) return;
+    const clusterId = lockedClusterIdRef.current;
+    if (!clusterId) return;
+    const stop = findStopByClusterId(route, clusterId);
+    if (!stop) return;
+
+    await api.routes.stopComplete(id, stop.id);
+    const nextCompleted = new Set(completedClusterIdsRef.current);
+    nextCompleted.add(clusterId);
+    completedClusterIdsRef.current = nextCompleted;
+    setCompletedClusterIds(nextCompleted);
+
+    await refreshRoute();
+    const r = routeRef.current ?? route;
+    advanceToNextCluster(r);
+  }, [id, route, refreshRoute, advanceToNextCluster]);
+
+  const handleBlockingSkip = useCallback(() => {
+    if (!route) return;
+    const clusterId = lockedClusterIdRef.current;
+    if (!clusterId) return;
+
+    const nextSkipped = new Set(skippedClusterIdsRef.current);
+    nextSkipped.add(clusterId);
+    skippedClusterIdsRef.current = nextSkipped;
+    setSkippedClusterIds(nextSkipped);
+
+    advanceToNextCluster(route);
+  }, [route, advanceToNextCluster]);
+
+  const handleBlockingSnooze = useCallback(() => {
+    blockingAlertRef.current = null;
+    setBlockingAlert(null);
+    routeStateRef.current = "SERVICING_CLUSTER";
+    setRouteState("SERVICING_CLUSTER");
+    snoozeUntilRef.current = Date.now() + SNOOZE_MS;
+  }, []);
+
   const handleArrive = async (stop: RouteStopDetail) => {
     if (!id) return;
     await api.routes.stopArrive(id, stop.id);
+    lockedClusterIdRef.current = stop.clusterId;
+    setLockedClusterId(stop.clusterId);
+    blockingAlertRef.current = null;
+    setBlockingAlert(null);
+    routeStateRef.current = "SERVICING_CLUSTER";
+    setRouteState("SERVICING_CLUSTER");
+    const idx = route?.stops.findIndex((s) => s.id === stop.id) ?? -1;
+    if (idx >= 0) {
+      activeIdxRef.current = idx;
+      setActiveIdx(idx);
+    }
     await refreshRoute();
   };
 
   const handleComplete = async (stop: RouteStopDetail) => {
-    if (!id) return;
+    if (!id || !route) return;
     await api.routes.stopComplete(id, stop.id);
-    firedZonesRef.current = new Set(); // reset proximity zones for new stop
+    const nextCompleted = new Set(completedClusterIdsRef.current);
+    nextCompleted.add(stop.clusterId);
+    completedClusterIdsRef.current = nextCompleted;
+    setCompletedClusterIds(nextCompleted);
     await refreshRoute();
+    const r = routeRef.current ?? route;
+    advanceToNextCluster(r);
   };
 
-  const handleSkip = () => {
+  const handleSkip = (stop: RouteStopDetail) => {
     if (!route) return;
-    const pending = route.stops.filter((s) => s.status === "pending");
-    const currentStop = route.stops[activeIdx];
-    const nextDifferent = pending.find((s) => s.id !== currentStop?.id);
-    if (nextDifferent) {
-      const idx = route.stops.indexOf(nextDifferent);
-      setActiveIdx(idx);
-      firedZonesRef.current = new Set();
-    }
+    const nextSkipped = new Set(skippedClusterIdsRef.current);
+    nextSkipped.add(stop.clusterId);
+    skippedClusterIdsRef.current = nextSkipped;
+    setSkippedClusterIds(nextSkipped);
+    advanceToNextCluster(route);
   };
 
   // ── Render guards ─────────────────────────────────────────────────────
@@ -531,8 +693,14 @@ export function DriverView() {
   }
   if (!route) return null;
 
-  const activeStop = route.stops[activeIdx] ?? route.stops.find((s) => s.status !== "complete") ?? null;
-  const pendingStops = route.stops.filter((s) => s.status !== "complete");
+  const lockedStop = lockedClusterId
+    ? route.stops.find((s) => s.clusterId === lockedClusterId)
+    : null;
+  const activeStop = lockedStop
+    ?? route.stops[activeIdx]
+    ?? route.stops.find((s) => isStopAvailable(s, completedClusterIds, skippedClusterIds))
+    ?? null;
+  const pendingStops = route.stops.filter((s) => isStopAvailable(s, completedClusterIds, skippedClusterIds));
   const completedCount = route.stops.length - pendingStops.length;
   const nextStop = pendingStops.find((s) => s.id !== activeStop?.id);
   const distToActive = activeStop && driverPos ? haversine(driverPos, activeStop.centroid) : null;
@@ -557,8 +725,17 @@ export function DriverView() {
         </div>
       )}
 
-      {/* ── Alert overlay ───────────────────────────────────────────── */}
+      {/* ── Non-blocking proximity alerts ───────────────────────────── */}
       <AlertBanner alert={activeAlert} onDismiss={() => setActiveAlert(null)} />
+
+      {/* ── Blocking arrival alert — requires explicit action ─────────── */}
+      <BlockingAlertOverlay
+        alert={blockingAlert}
+        onAcknowledge={() => void handleBlockingAcknowledge()}
+        onComplete={() => void handleBlockingComplete()}
+        onSkip={handleBlockingSkip}
+        onSnooze={handleBlockingSnooze}
+      />
 
       {/* ── Header bar (52px) ───────────────────────────────────────── */}
       <div style={{
@@ -701,7 +878,7 @@ export function DriverView() {
 
           {/* Action buttons */}
           <div style={{ display: "flex", gap: ".75rem", marginTop: ".25rem", flexWrap: "wrap", alignItems: "center" }}>
-            {activeStop.status === "pending" && (
+            {activeStop.status === "pending" && routeState !== "ARRIVED_BLOCKED" && (
               <button
                 className="btn-primary"
                 style={{ flex: 1, minHeight: 52, fontSize: "clamp(.9rem, 3.5vw, 1.05rem)", fontWeight: 800 }}
@@ -710,7 +887,7 @@ export function DriverView() {
                 Arrived
               </button>
             )}
-            {activeStop.status === "arrived" && (
+            {(activeStop.status === "arrived" || routeState === "SERVICING_CLUSTER") && (
               <button
                 className="btn-success"
                 style={{ flex: 2, minHeight: 56, fontSize: "clamp(1rem, 4vw, 1.2rem)", fontWeight: 900, letterSpacing: ".03em" }}
@@ -719,11 +896,11 @@ export function DriverView() {
                 ✓ Delivered
               </button>
             )}
-            {pendingStops.length > 1 && (
+            {pendingStops.length > 1 && routeState !== "ARRIVED_BLOCKED" && (
               <button
                 className="btn-ghost"
                 style={{ flex: 1, minHeight: 52, fontSize: "clamp(.85rem, 3vw, 1rem)", color: "#94a3b8", borderColor: "#334155" }}
-                onClick={handleSkip}
+                onClick={() => handleSkip(activeStop)}
               >
                 Skip →
               </button>

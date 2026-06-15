@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
 
 export type AlertLevel = "warning" | "alert" | "arriving" | "nearby";
 
@@ -6,6 +6,14 @@ export interface ActiveAlert {
   level: AlertLevel;
   lines: string[];
   id: string; // unique key so React re-fires on each new alert
+}
+
+/** Full-screen blocking arrival alert — requires explicit driver action. */
+export interface BlockingAlert {
+  id: string;
+  clusterId: string;
+  level: "arriving";
+  lines: string[];
 }
 
 // ── Audio ──────────────────────────────────────────────────────────────────
@@ -93,8 +101,7 @@ export function AlertBanner({ alert, onDismiss }: AlertBannerProps) {
       void ctx.resume().then(() => {
         if (alert.level === "warning") playWarning(ctx);
         else if (alert.level === "alert") playAlert(ctx);
-        else if (alert.level === "arriving") playArriving(ctx);
-        else playNearby(ctx);
+        else if (alert.level === "nearby") playNearby(ctx);
       });
     } catch { /* audio unavailable */ }
 
@@ -105,49 +112,9 @@ export function AlertBanner({ alert, onDismiss }: AlertBannerProps) {
     return () => { if (timerRef.current) clearTimeout(timerRef.current); };
   }, [alert?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!alert) return null;
+  if (!alert || alert.level === "arriving") return null;
 
   const meta = META[alert.level];
-  const isArriving = alert.level === "arriving";
-
-  if (isArriving) {
-    return (
-      <div
-        role="alertdialog"
-        aria-modal="true"
-        style={{
-          position: "fixed", inset: 0, zIndex: 10000,
-          display: "flex", flexDirection: "column",
-          alignItems: "center", justifyContent: "center",
-          background: meta.bg,
-          animation: "arrivingFlash 0.6s steps(1) infinite",
-          padding: "2rem",
-          textAlign: "center",
-        }}
-        onClick={onDismiss}
-      >
-        <div style={{ fontSize: "5rem", marginBottom: ".5rem" }}>{meta.icon}</div>
-        <div style={{ color: "#fff", fontWeight: 900, fontSize: "clamp(2rem, 8vw, 3.5rem)", letterSpacing: ".04em", lineHeight: 1.1, marginBottom: "1rem" }}>
-          {meta.label}
-        </div>
-        {alert.lines.map((l, i) => (
-          <div key={i} style={{ color: "#fecaca", fontSize: "clamp(1.1rem, 4vw, 1.5rem)", fontWeight: 700, marginBottom: ".35rem" }}>
-            {l}
-          </div>
-        ))}
-        <div style={{ marginTop: "2rem", color: "rgba(255,255,255,.6)", fontSize: ".9rem" }}>
-          Tap anywhere to dismiss
-        </div>
-        <style>{`
-          @keyframes arrivingFlash {
-            0%   { background: ${meta.bg}; }
-            50%  { background: #7f1d1d; }
-            100% { background: ${meta.bg}; }
-          }
-        `}</style>
-      </div>
-    );
-  }
 
   // Non-arriving: compact banner at top (slides down)
   const heightMap: Record<AlertLevel, string> = {
@@ -200,6 +167,123 @@ export function AlertBanner({ alert, onDismiss }: AlertBannerProps) {
         @keyframes slideDown {
           from { transform: translateY(-100%); opacity: 0; }
           to   { transform: translateY(0);     opacity: 1; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+const BLOCKING_META = META.arriving;
+
+interface BlockingAlertOverlayProps {
+  alert: BlockingAlert | null;
+  onAcknowledge: () => void;
+  onComplete: () => void;
+  onSkip: () => void;
+  onSnooze: () => void;
+}
+
+export function BlockingAlertOverlay({
+  alert,
+  onAcknowledge,
+  onComplete,
+  onSkip,
+  onSnooze,
+}: BlockingAlertOverlayProps) {
+  const audioCtxRef = useRef<AudioContext | null>(null);
+
+  function getCtx() {
+    if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
+    return audioCtxRef.current;
+  }
+
+  useEffect(() => {
+    if (!alert) return;
+    try {
+      const ctx = getCtx();
+      void ctx.resume().then(() => playArriving(ctx));
+    } catch { /* audio unavailable */ }
+  }, [alert?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!alert) return null;
+
+  const btnBase: CSSProperties = {
+    border: "none",
+    borderRadius: 8,
+    padding: "clamp(.75rem, 3vw, 1rem) 1rem",
+    fontWeight: 800,
+    fontSize: "clamp(.9rem, 3.5vw, 1.05rem)",
+    cursor: "pointer",
+    minHeight: 52,
+    width: "100%",
+  };
+
+  return (
+    <div
+      role="alertdialog"
+      aria-modal="true"
+      style={{
+        position: "fixed", inset: 0, zIndex: 10000,
+        display: "flex", flexDirection: "column",
+        alignItems: "center", justifyContent: "center",
+        background: BLOCKING_META.bg,
+        animation: "arrivingFlash 0.6s steps(1) infinite",
+        padding: "clamp(1rem, 4vw, 2rem)",
+        textAlign: "center",
+      }}
+    >
+      <div style={{ fontSize: "5rem", marginBottom: ".5rem" }}>{BLOCKING_META.icon}</div>
+      <div style={{ color: "#fff", fontWeight: 900, fontSize: "clamp(2rem, 8vw, 3.5rem)", letterSpacing: ".04em", lineHeight: 1.1, marginBottom: "1rem" }}>
+        {BLOCKING_META.label}
+      </div>
+      {alert.lines.map((l, i) => (
+        <div key={i} style={{ color: "#fecaca", fontSize: "clamp(1.1rem, 4vw, 1.5rem)", fontWeight: 700, marginBottom: ".35rem" }}>
+          {l}
+        </div>
+      ))}
+      <div style={{
+        marginTop: "1.75rem",
+        display: "flex",
+        flexDirection: "column",
+        gap: ".65rem",
+        width: "min(100%, 360px)",
+      }}>
+        <button
+          type="button"
+          onClick={onAcknowledge}
+          style={{ ...btnBase, background: "#fff", color: BLOCKING_META.bg }}
+        >
+          I'm Here
+        </button>
+        <button
+          type="button"
+          onClick={onComplete}
+          style={{ ...btnBase, background: "#16a34a", color: "#fff" }}
+        >
+          Mark Complete
+        </button>
+        <div style={{ display: "flex", gap: ".65rem" }}>
+          <button
+            type="button"
+            onClick={onSkip}
+            style={{ ...btnBase, flex: 1, background: "rgba(255,255,255,.2)", color: "#fff" }}
+          >
+            Skip
+          </button>
+          <button
+            type="button"
+            onClick={onSnooze}
+            style={{ ...btnBase, flex: 1, background: "rgba(255,255,255,.2)", color: "#fff" }}
+          >
+            Remind Me Again
+          </button>
+        </div>
+      </div>
+      <style>{`
+        @keyframes arrivingFlash {
+          0%   { background: ${BLOCKING_META.bg}; }
+          50%  { background: #7f1d1d; }
+          100% { background: ${BLOCKING_META.bg}; }
         }
       `}</style>
     </div>
