@@ -690,8 +690,12 @@ export function createRoutesRouter(io: SocketServer): Router {
       const { lat, lng, heading, speedMph } = req.body as {
         lat?: number; lng?: number; heading?: number; speedMph?: number;
       };
-      if (lat === undefined || lng === undefined) {
-        res.status(400).json({ error: "lat and lng are required." }); return;
+      if (
+        lat === undefined || lng === undefined
+        || typeof lat !== "number" || typeof lng !== "number"
+        || !Number.isFinite(lat) || !Number.isFinite(lng)
+      ) {
+        res.status(400).json({ error: "lat and lng must be valid numbers." }); return;
       }
 
       const db = getDb();

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import L from "../lib/leafletWithRotate";
+import { driverMarkerIcon } from "../lib/mapIcons";
 import type { RouteStopDetail } from "../api";
 import { DEFAULT_MAP_THEME_ID, getMapTheme, type MapTheme, type MapThemeId } from "../utils/mapThemes";
 import { filterFutureNearbyAlerts } from "../utils/nearbyAlerts";
@@ -19,28 +20,6 @@ function addRouteLine(layers: L.LayerGroup, coords: L.LatLngExpression[], dashed
   if (coords.length < 2) return;
   L.polyline(coords, ROUTE_CASING).addTo(layers);
   L.polyline(coords, { ...ROUTE_CORE, ...(dashed ? { dashArray: "8 6", opacity: 0.75, weight: 4 } : {}) }).addTo(layers);
-}
-
-const DRIVER_MARKER_SRC = "/usps-eagle.svg";
-const DRIVER_PIN_W = 36;
-const DRIVER_PIN_H = 42; // taller than wide — teardrop shape
-
-/**
- * Directional teardrop pin — arrow inside points forward.
- * In follow mode the map rotates so heading=0; in overview mode rotate the pin by heading.
- */
-function driverMarkerIcon(followDriver: boolean, heading: number | null): L.DivIcon {
-  const deg = followDriver ? 0 : (heading ?? 0);
-  return L.divIcon({
-    className: "",
-    html: `<div style="transform:rotate(${deg}deg);transform-origin:${DRIVER_PIN_W / 2}px ${DRIVER_PIN_H / 2}px;">
-      <img src="${DRIVER_MARKER_SRC}" width="${DRIVER_PIN_W}" height="${DRIVER_PIN_H}" alt=""
-        draggable="false" decoding="async"
-        style="display:block;user-select:none;pointer-events:none;"/>
-    </div>`,
-    iconSize: [DRIVER_PIN_W, DRIVER_PIN_H],
-    iconAnchor: [DRIVER_PIN_W / 2, DRIVER_PIN_H / 2],
-  });
 }
 
 // Fix Leaflet default icon paths broken by bundlers
@@ -212,7 +191,11 @@ export function DeliveryMap({
     const map = mapRef.current;
     if (!map) return;
 
-    if (driverPosition) {
+    if (
+      driverPosition
+      && Number.isFinite(driverPosition.lat)
+      && Number.isFinite(driverPosition.lng)
+    ) {
       const latlng: L.LatLngExpression = [driverPosition.lat, driverPosition.lng];
 
       if (driverHeading != null && Number.isFinite(driverHeading)) {

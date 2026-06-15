@@ -38,9 +38,14 @@ const ZONE_ARRIVING = 40;   // m  → full-screen flash, siren
 const ZONE_ALERT    = 120;  // m  → urgent top banner, triple beep
 const ZONE_WARNING  = 300;  // m  → amber toast, double ding
 
+function isValidPos(pos: { lat: number; lng: number }): boolean {
+  return Number.isFinite(pos.lat) && Number.isFinite(pos.lng)
+    && Math.abs(pos.lat) <= 90 && Math.abs(pos.lng) <= 180;
+}
+
 // ── Demo path interpolation ───────────────────────────────────────────────
-function interpolatePath(geo: [number, number][], t: number): { lat: number; lng: number } {
-  if (geo.length === 0) return { lat: 0, lng: 0 };
+function interpolatePath(geo: [number, number][], t: number): { lat: number; lng: number } | null {
+  if (geo.length === 0) return null;
   if (geo.length === 1) return { lat: geo[0][1], lng: geo[0][0] };
   const dists = [0];
   for (let i = 1; i < geo.length; i++) {
@@ -48,10 +53,13 @@ function interpolatePath(geo: [number, number][], t: number): { lat: number; lng
     dists.push(dists[i - 1] + Math.sqrt(dx * dx + dy * dy));
   }
   const total = dists[dists.length - 1];
+  if (total === 0) return { lat: geo[0][1], lng: geo[0][0] };
   const target = t * total;
   for (let i = 1; i < dists.length; i++) {
     if (dists[i] >= target) {
-      const f = (target - dists[i - 1]) / (dists[i] - dists[i - 1]);
+      const segLen = dists[i] - dists[i - 1];
+      if (segLen === 0) return { lat: geo[i][1], lng: geo[i][0] };
+      const f = (target - dists[i - 1]) / segLen;
       return { lat: geo[i - 1][1] + f * (geo[i][1] - geo[i - 1][1]), lng: geo[i - 1][0] + f * (geo[i][0] - geo[i - 1][0]) };
     }
   }
@@ -87,6 +95,7 @@ function headingFromPath(geo: [number, number][], t: number): number {
   const ahead = Math.min(t + 0.015, 1);
   const from = interpolatePath(geo, t);
   const to = interpolatePath(geo, ahead);
+  if (!from || !to) return 0;
   if (haversine(from, to) < 0.5) {
     return compassBearing(
       { lat: geo[0][1], lng: geo[0][0] },
@@ -315,6 +324,8 @@ export function DriverView() {
     r: RouteDetail | null,
     currIdx: number,
   ) => {
+    if (!isValidPos(pos)) return;
+
     setDriverPos(pos);
     if (r) checkProximity(pos, r, currIdx);
 
@@ -338,7 +349,7 @@ export function DriverView() {
         lat: pos.lat,
         lng: pos.lng,
         heading: lastHeadingRef.current ?? undefined,
-      });
+      }).catch(() => { /* non-critical telemetry */ });
     }
   }, [id, checkProximity]);
 
@@ -370,10 +381,12 @@ export function DriverView() {
     let cancelled = false;
 
     const onPosition = (pos: GeolocationPosition) => {
+      const { latitude, longitude } = pos.coords;
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
       const rawHeading = pos.coords.heading;
       const heading = rawHeading != null && Number.isFinite(rawHeading) ? rawHeading : undefined;
       handleGps(
-        { lat: pos.coords.latitude, lng: pos.coords.longitude },
+        { lat: latitude, lng: longitude },
         heading,
         routeRef.current,
         activeIdxRef.current,
@@ -441,6 +454,7 @@ export function DriverView() {
 
     const tick = (r: RouteDetail, idx: number) => {
       const pos = interpolatePath(legGeo, demoProgressRef.current);
+      if (!pos) return;
       handleGps(pos, headingFromPath(legGeo, demoProgressRef.current), r, idx);
       void processDemoStopActions(pos, r, idx, demoProgressRef.current >= 1);
     };
