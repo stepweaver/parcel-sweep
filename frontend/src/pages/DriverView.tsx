@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from "uuid";
 import { api, type RouteDetail, type RouteStopDetail } from "../api";
 import { DeliveryMap } from "../components/DeliveryMap";
 import { MapThemeSelector } from "../components/MapThemeSelector";
+import { ThemeSelector } from "../components/ThemeSelector";
 import { AlertBanner, type ActiveAlert } from "../components/AlertBanner";
 import { useMapTheme } from "../hooks/useMapTheme";
 import { NavigateButtons } from "../components/NavigateButtons";
@@ -149,6 +150,25 @@ export function DriverView() {
       setActiveIdx(next);
     }
     if (r.status === "complete") setRouteComplete(true);
+  }, [id]);
+
+  const loadRoute = useCallback(async () => {
+    if (!id) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await api.routes.get(id);
+      routeRef.current = r;
+      setRoute(r);
+      if (r.status === "complete") setRouteComplete(true);
+      const next = r.stops.findIndex((s) => s.status === "pending");
+      activeIdxRef.current = next >= 0 ? next : 0;
+      setActiveIdx(next >= 0 ? next : 0);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
   }, [id]);
 
   /** Demo mirrors production: auto-arrive at the arriving zone, auto-deliver at the stop. */
@@ -326,15 +346,7 @@ export function DriverView() {
   useEffect(() => {
     if (!id) return;
 
-    api.routes.get(id)
-      .then((r) => {
-        setRoute(r);
-        if (r.status === "complete") setRouteComplete(true);
-        const next = r.stops.findIndex((s) => s.status === "pending");
-        setActiveIdx(next >= 0 ? next : 0);
-      })
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
+    void loadRoute();
 
     joinRoute(id);
     const offStop = onStopCompleted(async () => {
@@ -348,28 +360,55 @@ export function DriverView() {
       offStop(); offComplete();
       if (demoRef.current) clearInterval(demoRef.current);
     };
-  }, [id, refreshRoute]);
+  }, [id, loadRoute, refreshRoute]);
 
   // Real GPS — paused during demo so simulated path is not overwritten
   useEffect(() => {
     if (!id || demoMode || !navigator.geolocation) return;
 
-    const watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        const rawHeading = pos.coords.heading;
-        const heading = rawHeading != null && Number.isFinite(rawHeading) ? rawHeading : undefined;
-        handleGps(
-          { lat: pos.coords.latitude, lng: pos.coords.longitude },
-          heading,
-          routeRef.current,
-          activeIdxRef.current,
-        );
-      },
-      () => { /* permission denied — user can use Demo Mode */ },
-      { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 },
-    );
+    let watchId: number | null = null;
+    let cancelled = false;
 
-    return () => { navigator.geolocation.clearWatch(watchId); };
+    const onPosition = (pos: GeolocationPosition) => {
+      const rawHeading = pos.coords.heading;
+      const heading = rawHeading != null && Number.isFinite(rawHeading) ? rawHeading : undefined;
+      handleGps(
+        { lat: pos.coords.latitude, lng: pos.coords.longitude },
+        heading,
+        routeRef.current,
+        activeIdxRef.current,
+      );
+    };
+
+    const startWatch = () => {
+      if (watchId != null || cancelled) return;
+      watchId = navigator.geolocation.watchPosition(
+        onPosition,
+        () => { /* permission denied — use Demo Mode */ },
+        { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 },
+      );
+    };
+
+    if ("permissions" in navigator) {
+      void navigator.permissions.query({ name: "geolocation" }).then((status) => {
+        if (cancelled) return;
+        if (status.state === "granted") startWatch();
+        status.onchange = () => {
+          if (status.state === "granted") startWatch();
+          else if (watchId != null) {
+            navigator.geolocation.clearWatch(watchId);
+            watchId = null;
+          }
+        };
+      }).catch(() => startWatch());
+    } else {
+      startWatch();
+    }
+
+    return () => {
+      cancelled = true;
+      if (watchId != null) navigator.geolocation.clearWatch(watchId);
+    };
   }, [id, demoMode, handleGps]);
 
   useEffect(() => {
@@ -464,9 +503,15 @@ export function DriverView() {
   }
   if (error) {
     return (
-      <div style={{ position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#7f1d1d", flexDirection: "column", gap: "1rem" }}>
+      <div style={{ position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#7f1d1d", flexDirection: "column", gap: "1rem", padding: "1.5rem", textAlign: "center" }}>
         <div style={{ color: "#fca5a5", fontSize: "1.1rem" }}>Error: {error}</div>
-        <Link to="/"><button className="btn-primary">Back</button></Link>
+        <div style={{ color: "#fecaca", fontSize: ".9rem", maxWidth: 320 }}>
+          If the server was still starting, retry below. For blocked location access, use Demo mode after the route loads.
+        </div>
+        <div style={{ display: "flex", gap: ".75rem", flexWrap: "wrap", justifyContent: "center" }}>
+          <button className="btn-primary" onClick={() => void loadRoute()}>Retry</button>
+          <Link to="/"><button className="btn-primary">Back</button></Link>
+        </div>
       </div>
     );
   }
@@ -575,6 +620,7 @@ export function DriverView() {
           onChange={setThemeId}
           variant="overlay"
         />
+        <ThemeSelector variant="overlay" />
         {/* No GPS overlay */}
         {!driverPos && (
           <div style={{

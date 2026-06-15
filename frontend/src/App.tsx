@@ -1,4 +1,6 @@
 import { BrowserRouter, Routes, Route, NavLink } from "react-router-dom";
+import { ThemeSelector } from "./components/ThemeSelector";
+import { ThemeProvider } from "./context/ThemeProvider";
 import { Dashboard } from "./pages/Dashboard";
 import { Admin } from "./pages/Admin";
 import { ManifestPage } from "./pages/ManifestPage";
@@ -32,6 +34,7 @@ function Nav() {
             + Generate Manifest
           </NavLink>
         </div>
+        <ThemeSelector variant="compact" className="app-nav-theme" />
       </div>
     </nav>
   );
@@ -39,6 +42,7 @@ function Nav() {
 
 export default function App() {
   return (
+    <ThemeProvider>
     <BrowserRouter>
       <Routes>
         {/* Driver view is full-screen — no nav */}
@@ -62,5 +66,6 @@ export default function App() {
         />
       </Routes>
     </BrowserRouter>
+    </ThemeProvider>
   );
 }

@@ -159,16 +159,46 @@ export interface CreatedRouteFromProposal {
   proposalId: string;
 }
 
+const RETRYABLE_STATUSES = new Set([502, 503, 504]);
+const MAX_FETCH_ATTEMPTS = 6;
+const RETRY_BASE_MS = 400;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
-    headers: { "Content-Type": "application/json", ...options?.headers },
-    ...options,
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < MAX_FETCH_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(url, {
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        ...options,
+      });
+
+      if (!res.ok) {
+        if (RETRYABLE_STATUSES.has(res.status) && attempt < MAX_FETCH_ATTEMPTS - 1) {
+          await sleep(RETRY_BASE_MS * (attempt + 1));
+          continue;
+        }
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+
+      return res.json() as Promise<T>;
+    } catch (err) {
+      const isNetworkError = err instanceof TypeError;
+      if (isNetworkError && attempt < MAX_FETCH_ATTEMPTS - 1) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        await sleep(RETRY_BASE_MS * (attempt + 1));
+        continue;
+      }
+      throw err;
+    }
   }
-  return res.json() as Promise<T>;
+
+  throw lastError ?? new Error("Request failed");
 }
 
 // ── Manifests ────────────────────────────────────────────────
