@@ -9,6 +9,7 @@ import { useMapTheme } from "../hooks/useMapTheme";
 import { NavigateButtons } from "../components/NavigateButtons";
 import { joinRoute, leaveRoute, onStopCompleted, onRouteComplete } from "../socket";
 import { notifyProximityAlert, requestNotificationPermission } from "../utils/proximityNotify";
+import { filterFutureNearbyAlerts } from "../utils/nearbyAlerts";
 
 // ── Client-side Haversine ──────────────────────────────────────────────────
 const EARTH_R = 6_371_000;
@@ -265,10 +266,11 @@ export function DriverView() {
       }
     }
 
-    // Check nearby stops in other sequence positions
+    // Check nearby stops later in the delivery sequence only
     const alertMeters = r.alertMeters;
     for (const stop of pendingStops) {
       if (stop === currentStop) continue;
+      if (currentStop && stop.sequenceNumber <= currentStop.sequenceNumber) continue;
       const dist = haversine(pos, stop.centroid);
       if (dist < alertMeters && !firedZonesRef.current.has(`${stop.id}:nearby`)) {
         firedZonesRef.current.add(`${stop.id}:nearby`);
@@ -476,6 +478,9 @@ export function DriverView() {
   const nextStop = pendingStops.find((s) => s.id !== activeStop?.id);
   const distToActive = activeStop && driverPos ? haversine(driverPos, activeStop.centroid) : null;
   const totalPkgsAtStop = activeStop?.packages.reduce((s, p) => s + p.packageCount, 0) ?? 0;
+  const visibleAlerts = activeStop
+    ? filterFutureNearbyAlerts(activeStop.alerts, activeStop.sequenceNumber, route.stops)
+    : [];
 
   return (
     // position:fixed + inset:0 = immune to browser chrome/address bar changes
@@ -620,10 +625,10 @@ export function DriverView() {
             <strong style={{ color: "#e2e8f0" }}>{totalPkgsAtStop}</strong> {totalPkgsAtStop === 1 ? "package" : "packages"}
           </div>
 
-          {/* Alerts (compact inline) */}
-          {activeStop.alerts.length > 0 && (
+          {/* Alerts (compact inline) — future stops only */}
+          {visibleAlerts.length > 0 && (
             <div style={{ color: "#fbbf24", fontSize: "clamp(.72rem, 2.8vw, .85rem)", display: "flex", gap: ".3rem", flexWrap: "wrap" }}>
-              {activeStop.alerts.map((a, i) => <span key={i}>⚠ {a}</span>)}
+              {visibleAlerts.map((a, i) => <span key={i}>⚠ {a}</span>)}
             </div>
           )}
 

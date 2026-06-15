@@ -1,8 +1,10 @@
 import type { RouteStopDetail } from "../api";
+import { filterFutureNearbyAlerts } from "../utils/nearbyAlerts";
 import { NavigateButtons } from "./NavigateButtons";
 
 interface StopCardProps {
   stop: RouteStopDetail;
+  allStops?: RouteStopDetail[];
   isActive?: boolean;
   onArrive?: () => void;
   onComplete?: () => void;
@@ -25,8 +27,11 @@ function formatDrive(seconds: number, miles: number): string {
   return `${miles} mi · ${mins} min`;
 }
 
-export function StopCard({ stop, isActive, onArrive, onComplete }: StopCardProps) {
+export function StopCard({ stop, allStops, isActive, onArrive, onComplete }: StopCardProps) {
   const totalPkgs = stop.packages.reduce((s, p) => s + p.packageCount, 0);
+  const visibleAlerts = allStops
+    ? filterFutureNearbyAlerts(stop.alerts, stop.sequenceNumber, allStops)
+    : stop.alerts;
 
   return (
     <div
@@ -57,7 +62,7 @@ export function StopCard({ stop, isActive, onArrive, onComplete }: StopCardProps
         <strong>{totalPkgs}</strong> {totalPkgs === 1 ? "package" : "packages"}
       </div>
 
-      <div className="text-wrap" style={{ fontSize: ".85rem", marginBottom: stop.alerts.length ? ".4rem" : 0 }}>
+      <div className="text-wrap" style={{ fontSize: ".85rem", marginBottom: visibleAlerts.length ? ".4rem" : 0 }}>
         {stop.packages.map((p) => (
           <div key={p.id} style={{ color: "#374151" }}>
             {p.address} — <em>{p.recipientName}</em>
@@ -68,9 +73,9 @@ export function StopCard({ stop, isActive, onArrive, onComplete }: StopCardProps
         ))}
       </div>
 
-      {stop.alerts.length > 0 && (
+      {visibleAlerts.length > 0 && (
         <div className="text-wrap" style={{ background: "#fffbeb", border: "1px solid #fde047", borderRadius: 6, padding: ".5rem .75rem", fontSize: ".82rem", color: "#92400e" }}>
-          {stop.alerts.map((a, i) => <div key={i}>⚠ {a}</div>)}
+          {visibleAlerts.map((a, i) => <div key={i}>⚠ {a}</div>)}
         </div>
       )}
 

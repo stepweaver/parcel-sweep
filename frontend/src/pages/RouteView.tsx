@@ -8,6 +8,7 @@ import { LoadOrderList } from "../components/LoadOrderList";
 import { ExportButtons } from "../components/NavigateButtons";
 import { useMapTheme } from "../hooks/useMapTheme";
 import { googleMapsFullRouteUrl, openExternal } from "../utils/navigationLinks";
+import { filterFutureNearbyAlerts } from "../utils/nearbyAlerts";
 
 export function RouteView() {
   const { id } = useParams<{ id: string }>();
@@ -54,7 +55,9 @@ export function RouteView() {
   const totalMiles = Math.round((outboundMiles + returnMiles) * 10) / 10;
   const returnDriveMin = Math.round(returnSeconds / 60);
   const totalPkgs = route.stops.reduce((s, stop) => s + stop.packages.reduce((ss, p) => ss + p.packageCount, 0), 0);
-  const alertStops = route.stops.filter((s) => s.alerts.length > 0).length;
+  const alertStops = route.stops.filter(
+    (s) => filterFutureNearbyAlerts(s.alerts, s.sequenceNumber, route.stops).length > 0,
+  ).length;
   const canExport = route.stops.length > 0;
 
   const openFullRouteInGoogle = () => {
@@ -143,7 +146,7 @@ export function RouteView() {
             <div className="text-wrap" style={{ color: "#6b7280", fontSize: ".85rem" }}>{route.startAddress}</div>
           </div>
           {route.stops.map((stop) => (
-            <StopCard key={stop.id} stop={stop} />
+            <StopCard key={stop.id} stop={stop} allStops={route.stops} />
           ))}
           {returnSeconds > 0 && (
             <div className="card" style={{ marginBottom: ".75rem", borderLeft: "4px solid #6b7280" }}>

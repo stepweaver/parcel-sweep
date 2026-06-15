@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import L from "../lib/leafletWithRotate";
 import type { RouteStopDetail } from "../api";
 import { DEFAULT_MAP_THEME_ID, getMapTheme, type MapTheme, type MapThemeId } from "../utils/mapThemes";
+import { filterFutureNearbyAlerts } from "../utils/nearbyAlerts";
 
 function createTileLayer(theme: MapTheme): L.TileLayer {
   return L.tileLayer(theme.url, {
@@ -190,10 +191,11 @@ export function DeliveryMap({
         iconAnchor: [size / 2, size / 2],
       });
 
+      const visibleAlerts = filterFutureNearbyAlerts(stop.alerts, stop.sequenceNumber, stops);
       const popupLines = [
         `<b>Stop #${stop.sequenceNumber}</b>`,
         ...stop.packages.map((p) => `${p.address} — ${p.recipientName}`),
-        stop.alerts.length ? `<span style="color:#d97706">⚠ ${stop.alerts[0]}</span>` : "",
+        visibleAlerts.length ? `<span style="color:#d97706">⚠ ${visibleAlerts[0]}</span>` : "",
       ].filter(Boolean).join("<br>");
 
       L.marker([lat, lng], { icon }).bindPopup(popupLines).addTo(layers);

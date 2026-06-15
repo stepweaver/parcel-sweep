@@ -2,9 +2,10 @@ import { Cluster } from "../types/index.js";
 import { haversineMeters } from "./clusterer.js";
 
 /**
- * For each cluster in the ordered route, check every stop that belongs to
- * a *different* cluster.  If any of those stops falls within `alertMeters`
- * of the current cluster's centroid, add a human-readable alert.
+ * For each cluster in the ordered route, check stops in *later* clusters only.
+ * If any of those stops falls within `alertMeters` of the current cluster's
+ * centroid, add a human-readable alert. Past sequence stops are excluded so
+ * drivers only see nearby packages they have not yet reached.
  *
  * Returns a parallel array of string arrays — one per cluster in the order
  * given by `orderedClusters`.
@@ -17,9 +18,7 @@ export function generateAlerts(
     const alerts: string[] = [];
     const seenAddresses = new Set<string>();
 
-    for (let other = 0; other < orderedClusters.length; other++) {
-      if (other === idx) continue;
-
+    for (let other = idx + 1; other < orderedClusters.length; other++) {
       const otherCluster = orderedClusters[other];
 
       for (const stop of otherCluster.stops) {
