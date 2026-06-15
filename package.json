@@ -2,6 +2,7 @@
   "name": "parcel-sweep-root",
   "version": "1.0.0",
   "private": true,
+  "author": "Stephen Weaver <hello@stepweaver.dev> (https://stepweaver.dev)",
   "workspaces": [
     "backend",
     "frontend"

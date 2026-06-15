@@ -2,6 +2,7 @@
   "name": "parcel-sweep-backend",
   "version": "1.0.0",
   "description": "Parcel Sweep API server — route optimizer with real-time GPS and SQLite persistence.",
+  "author": "Stephen Weaver <hello@stepweaver.dev> (https://stepweaver.dev)",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

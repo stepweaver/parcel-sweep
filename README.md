@@ -258,6 +258,14 @@ parcel-sweep/
 
 ---
 
+## Author
+
+**[Stephen Weaver](https://stepweaver.dev)** — [λstepweaver](https://stepweaver.dev) · [GitHub](https://github.com/stephen) · [hello@stepweaver.dev](mailto:hello@stepweaver.dev)
+
+Parcel Sweep is a full-stack prototype built by Stephen Weaver as a last-mile delivery operations demo. The ops HUD aesthetic draws from the terminal and systems design language of [stepweaver.dev](https://stepweaver.dev).
+
+---
+
 ## License
 
 Demo / prototype — add a license before open-sourcing or distributing.

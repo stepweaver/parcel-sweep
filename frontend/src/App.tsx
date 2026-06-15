@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, NavLink } from "react-router-dom";
+import { AppFooter } from "./components/AppFooter";
 import { ThemeSelector } from "./components/ThemeSelector";
 import { ThemeProvider } from "./context/ThemeProvider";
 import { Dashboard } from "./pages/Dashboard";
@@ -61,6 +62,7 @@ export default function App() {
                 <Route path="/routes/:id/load" element={<LoadingDock />} />
                 <Route path="/routes/:id/route" element={<RouteView />} />
               </Routes>
+              <AppFooter />
             </>
           }
         />

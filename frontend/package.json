@@ -2,6 +2,7 @@
   "name": "frontend",
   "private": true,
   "version": "0.0.0",
+  "author": "Stephen Weaver <hello@stepweaver.dev> (https://stepweaver.dev)",
   "type": "module",
   "scripts": {
     "dev": "vite",
