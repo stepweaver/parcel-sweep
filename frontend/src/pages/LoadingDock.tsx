@@ -22,7 +22,7 @@ export function LoadingDock() {
   const [scanHistory, setScanHistory] = useState<ScanResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [optimizing, setOptimizing] = useState(false);
+  const [beginningTour, setBeginningTour] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [loadOrder, setLoadOrder] = useState<LoadOrderResponse | null>(null);
   const [loadOrderLoading, setLoadOrderLoading] = useState(false);
@@ -110,16 +110,16 @@ export function LoadingDock() {
     if (id) void fetchLoadOrder(id);
   };
 
-  const handleOptimize = async () => {
+  const handleBeginTour = async () => {
     if (!id) return;
-    setOptimizing(true);
+    setBeginningTour(true);
     try {
       await api.routes.optimize(id);
       navigate(`/routes/${id}/route`);
     } catch (e) {
-      alert(`Optimization failed: ${(e as Error).message}`);
+      alert(`Could not begin tour: ${(e as Error).message}`);
     } finally {
-      setOptimizing(false);
+      setBeginningTour(false);
     }
   };
 
@@ -149,10 +149,10 @@ export function LoadingDock() {
           </span>
           <button
             className="btn-primary"
-            disabled={optimizing || loadedPackages.length === 0}
-            onClick={handleOptimize}
+            disabled={beginningTour || loadedPackages.length === 0}
+            onClick={handleBeginTour}
           >
-            {optimizing ? <><span className="spinner" /> Optimizing…</> : "Optimize Route →"}
+            {beginningTour ? <><span className="spinner" /> Preparing tour…</> : "Begin Tour →"}
           </button>
         </div>
       </div>

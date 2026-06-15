@@ -48,6 +48,7 @@ export function ManifestPage() {
   >({});
   const [assignRouteId, setAssignRouteId] = useState("");
   const [assigningId, setAssigningId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const selectedStation = STATIONS.find((s) => s.id === stationId);
   const startAddress = stationId === "custom"
@@ -163,6 +164,34 @@ export function ManifestPage() {
   const activeRoutes = routes.filter((r) => r.status !== "complete");
   const unassignedPackages = packages.filter((p) => !p.assignedRouteId && p.status === "pending");
 
+  const handleDeleteManifest = async () => {
+    if (!manifest) return;
+    const activeCount = routes.filter((r) => r.status === "in_delivery").length;
+    const routeNote = routes.length
+      ? `\n\nThis will also delete ${routes.length} route${routes.length === 1 ? "" : "s"}.`
+      : "";
+    const activeNote = activeCount
+      ? `\n\nWarning: ${activeCount} route${activeCount === 1 ? " is" : "s are"} still in delivery.`
+      : "";
+
+    if (
+      !confirm(
+        `Delete this manifest (ZIP ${manifest.zipCode}, ${manifest.totalPackages} packages)?${routeNote}${activeNote}\n\nThis cannot be undone.`
+      )
+    ) {
+      return;
+    }
+
+    setDeleting(true);
+    try {
+      await api.manifests.delete(manifest.id);
+      navigate("/");
+    } catch (e) {
+      alert(`Error: ${(e as Error).message}`);
+      setDeleting(false);
+    }
+  };
+
   const handleAssignPackages = async (packageIds: string[], key: string) => {
     if (!manifest || !assignRouteId) return;
     setAssigningId(key);
@@ -252,6 +281,16 @@ export function ManifestPage() {
             {new Date(manifest.generatedAt).toLocaleString()} · {manifest.totalPackages} packages
             {routes.length > 0 && ` · ${routes.length} route${routes.length === 1 ? "" : "s"}`}
           </div>
+        </div>
+        <div className="page-header__actions">
+          <button
+            className="btn-ghost"
+            style={{ color: "#dc2626" }}
+            disabled={deleting}
+            onClick={() => void handleDeleteManifest()}
+          >
+            {deleting ? "Deleting…" : "Delete manifest"}
+          </button>
         </div>
       </div>
 

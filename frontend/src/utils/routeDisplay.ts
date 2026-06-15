@@ -9,7 +9,7 @@ export const routeStatusColor: Record<string, string> = {
 
 export const routeStatusLabel: Record<string, string> = {
   loading: "Loading",
-  optimized: "Optimized",
+  optimized: "Ready",
   in_delivery: "Active",
   complete: "Complete",
 };

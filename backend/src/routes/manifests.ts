@@ -329,16 +329,37 @@ manifestsRouter.get("/:id", (req: Request, res: Response, next: NextFunction): v
   }
 });
 
-/** DELETE /api/manifests/:id */
+/** DELETE /api/manifests/:id — removes manifest, its routes, and all packages */
 manifestsRouter.delete("/:id", (req: Request, res: Response, next: NextFunction): void => {
   try {
     const db = getDb();
-    const changes = exec(db.prepare(`DELETE FROM manifests WHERE id = ?`), String(req.params["id"]));
-    if (changes === 0) {
+    const manifestId = String(req.params["id"]);
+
+    const manifest = queryOne<ManifestRow>(
+      db.prepare(`SELECT id FROM manifests WHERE id = ?`),
+      manifestId
+    );
+    if (!manifest) {
       res.status(404).json({ error: "Manifest not found." });
       return;
     }
-    res.json({ deleted: req.params["id"] });
+
+    db.exec("BEGIN");
+    try {
+      // routes.manifest_id has no ON DELETE CASCADE; child stops/pings cascade from routes
+      exec(db.prepare(`DELETE FROM routes WHERE manifest_id = ?`), manifestId);
+      const changes = exec(db.prepare(`DELETE FROM manifests WHERE id = ?`), manifestId);
+      if (changes === 0) {
+        db.exec("ROLLBACK");
+        res.status(404).json({ error: "Manifest not found." });
+        return;
+      }
+      db.exec("COMMIT");
+      res.json({ deleted: manifestId });
+    } catch (inner) {
+      db.exec("ROLLBACK");
+      throw inner;
+    }
   } catch (err) {
     next(err);
   }

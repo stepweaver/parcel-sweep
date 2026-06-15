@@ -24,7 +24,23 @@ function resolveFrontendOrigin(): string {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FRONTEND_DIST = path.resolve(__dirname, "../../frontend/dist");
-const serveFrontend = fs.existsSync(path.join(FRONTEND_DIST, "index.html"));
+const INDEX_HTML_PATH = path.join(FRONTEND_DIST, "index.html");
+const serveFrontend = fs.existsSync(INDEX_HTML_PATH);
+const SITE_ORIGIN_PLACEHOLDER = "%SITE_ORIGIN%";
+
+let cachedIndexHtml: string | null = null;
+let cachedIndexHtmlMtimeMs = 0;
+
+function loadIndexHtml(origin: string): string {
+  const stat = fs.statSync(INDEX_HTML_PATH);
+  if (cachedIndexHtml && stat.mtimeMs === cachedIndexHtmlMtimeMs) {
+    return cachedIndexHtml.replaceAll(SITE_ORIGIN_PLACEHOLDER, origin);
+  }
+
+  cachedIndexHtml = fs.readFileSync(INDEX_HTML_PATH, "utf8");
+  cachedIndexHtmlMtimeMs = stat.mtimeMs;
+  return cachedIndexHtml.replaceAll(SITE_ORIGIN_PLACEHOLDER, origin);
+}
 
 // ── Bootstrap ────────────────────────────────────────────────
 const app = express();
@@ -80,7 +96,7 @@ if (serveFrontend) {
       next();
       return;
     }
-    res.sendFile(path.join(FRONTEND_DIST, "index.html"));
+    res.type("html").send(loadIndexHtml(FRONTEND_ORIGIN.replace(/\/$/, "")));
   });
 }
 

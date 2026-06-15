@@ -14,13 +14,47 @@ export function Dashboard() {
   const [routes, setRoutes] = useState<RouteSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const refresh = () =>
+    Promise.all([api.manifests.list(), api.routes.list()])
+      .then(([m, r]) => { setManifests(m); setRoutes(r); });
 
   useEffect(() => {
-    Promise.all([api.manifests.list(), api.routes.list()])
-      .then(([m, r]) => { setManifests(m); setRoutes(r); })
+    refresh()
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
+
+  const handleDeleteManifest = async (manifest: ManifestSummary) => {
+    const manifestRoutes = routes.filter((r) => r.manifestId === manifest.id);
+    const activeCount = manifestRoutes.filter((r) => r.status === "in_delivery").length;
+    const routeNote = manifestRoutes.length
+      ? `\n\nThis will also delete ${manifestRoutes.length} route${manifestRoutes.length === 1 ? "" : "s"}.`
+      : "";
+    const activeNote = activeCount
+      ? `\n\nWarning: ${activeCount} route${activeCount === 1 ? " is" : "s are"} still in delivery.`
+      : "";
+
+    if (
+      !confirm(
+        `Delete manifest ZIP ${manifest.zipCode} (${manifest.totalPackages} packages)?${routeNote}${activeNote}\n\nThis cannot be undone.`
+      )
+    ) {
+      return;
+    }
+
+    setDeletingId(manifest.id);
+    try {
+      await api.manifests.delete(manifest.id);
+      setManifests((prev) => prev.filter((m) => m.id !== manifest.id));
+      setRoutes((prev) => prev.filter((r) => r.manifestId !== manifest.id));
+    } catch (e) {
+      alert(`Error: ${(e as Error).message}`);
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const totalPackages = manifests.reduce((s, m) => s + m.totalPackages, 0);
   const activeRoutes = routes.filter((r) => r.status === "in_delivery").length;
@@ -84,21 +118,29 @@ export function Dashboard() {
                         : `ZIP ${m.zipCode}`;
 
                     return (
-                    <Link
-                      key={m.id}
-                      to={`/manifests/${m.id}`}
-                      className="list-row"
-                    >
-                      <div className="list-row__main">
+                    <div key={m.id} className="list-row">
+                      <Link
+                        to={`/manifests/${m.id}`}
+                        className="list-row__main"
+                        style={{ textDecoration: "none", color: "inherit" }}
+                      >
                         <strong>{label}</strong>
                         <div className="list-row__sub">
                           {new Date(m.generatedAt).toLocaleString()}
                         </div>
-                      </div>
-                      <div className="list-row__meta">
+                      </Link>
+                      <div className="list-row__meta" style={{ display: "flex", alignItems: "center", gap: ".75rem" }}>
                         <strong>{m.totalPackages}</strong> packages
+                        <button
+                          className="btn-ghost"
+                          style={{ color: "#dc2626", fontSize: ".8rem", padding: ".25rem .5rem" }}
+                          disabled={deletingId === m.id}
+                          onClick={() => void handleDeleteManifest(m)}
+                        >
+                          {deletingId === m.id ? "…" : "Delete"}
+                        </button>
                       </div>
-                    </Link>
+                    </div>
                     );
                   })}
                 </div>

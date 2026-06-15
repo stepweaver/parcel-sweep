@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, type RouteSummary } from "../api";
+import { api, type ManifestSummary, type RouteSummary } from "../api";
 import {
   formatDriveEta,
   routeHref,
@@ -15,15 +15,21 @@ const POLL_MS = 15_000;
 
 export function Admin() {
   const [routes, setRoutes] = useState<RouteSummary[]>([]);
+  const [manifests, setManifests] = useState<ManifestSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const refresh = useCallback(async (showSpinner = false) => {
     if (showSpinner) setLoading(true);
     try {
-      const data = await api.admin.routes();
-      setRoutes(sortRoutesForOps(data));
+      const [routeData, manifestData] = await Promise.all([
+        api.admin.routes(),
+        api.manifests.list(),
+      ]);
+      setRoutes(sortRoutesForOps(routeData));
+      setManifests(manifestData);
       setError(null);
       setLastUpdated(new Date());
     } catch (e) {
@@ -32,6 +38,35 @@ export function Admin() {
       if (showSpinner) setLoading(false);
     }
   }, []);
+
+  const handleDeleteManifest = async (manifest: ManifestSummary) => {
+    const manifestRoutes = routes.filter((r) => r.manifestId === manifest.id);
+    const activeCount = manifestRoutes.filter((r) => r.status === "in_delivery").length;
+    const routeNote = manifestRoutes.length
+      ? `\n\nThis will also delete ${manifestRoutes.length} route${manifestRoutes.length === 1 ? "" : "s"}.`
+      : "";
+    const activeNote = activeCount
+      ? `\n\nWarning: ${activeCount} route${activeCount === 1 ? " is" : "s are"} still in delivery.`
+      : "";
+
+    if (
+      !confirm(
+        `Delete manifest ZIP ${manifest.zipCode} (${manifest.totalPackages} packages)?${routeNote}${activeNote}\n\nThis cannot be undone.`
+      )
+    ) {
+      return;
+    }
+
+    setDeletingId(manifest.id);
+    try {
+      await api.manifests.delete(manifest.id);
+      await refresh(false);
+    } catch (e) {
+      alert(`Error: ${(e as Error).message}`);
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   useEffect(() => {
     void refresh(true);
@@ -83,6 +118,43 @@ export function Admin() {
               <div className="stat-value">{routes.length}</div>
               <div className="stat-label">Total Routes</div>
             </div>
+          </div>
+
+          <div className="card" style={{ marginBottom: "1.5rem" }}>
+            <h2 className="panel-title" style={{ marginBottom: "1rem" }}>Manifests</h2>
+            {manifests.length === 0 ? (
+              <div className="text-meta" style={{ textAlign: "center", padding: "1.5rem" }}>
+                No manifests yet.
+              </div>
+            ) : (
+              <div>
+                {manifests.map((m) => {
+                  const manifestRoutes = routes.filter((r) => r.manifestId === m.id);
+                  return (
+                    <div key={m.id} className="list-row">
+                      <Link to={`/manifests/${m.id}`} className="list-row__main" style={{ textDecoration: "none", color: "inherit" }}>
+                        <strong>ZIP {m.zipCode}</strong>
+                        <div className="list-row__sub">
+                          {new Date(m.generatedAt).toLocaleString()}
+                          {manifestRoutes.length > 0 && ` · ${manifestRoutes.length} route${manifestRoutes.length === 1 ? "" : "s"}`}
+                        </div>
+                      </Link>
+                      <div className="list-row__meta" style={{ display: "flex", alignItems: "center", gap: ".75rem" }}>
+                        <span>{m.totalPackages} pkg</span>
+                        <button
+                          className="btn-ghost"
+                          style={{ color: "#dc2626", fontSize: ".8rem", padding: ".25rem .5rem" }}
+                          disabled={deletingId === m.id}
+                          onClick={() => void handleDeleteManifest(m)}
+                        >
+                          {deletingId === m.id ? "Deleting…" : "Delete"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <div className="card">
