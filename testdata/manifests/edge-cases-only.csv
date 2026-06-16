@@ -1,0 +1,13 @@
+tracking_number,recipient_name,address_line_1,address_line_2,city,state,zip,weight_oz,length_in,width_in,height_in,hazmat_flag,sunday_eligible,pod_required,service_type,delivery_notes
+940099000000009001,Recipient 9001,,,South Bend,IN,46614,16,12,10,8,false,true,false,Priority Mail,
+940099000000009002,Recipient 9002,500 Oak Ave,,South Bend,IN,46614,16,12,10,8,false,true,false,Priority Mail,
+940099000000009003,Recipient 9003,103 Main St,,South Bend,IN,90210,16,12,10,8,false,true,false,Priority Mail,
+940099DUPLICATE001,Recipient 9004,104 Main St,,South Bend,IN,46614,16,12,10,8,false,true,false,Priority Mail,
+940099000000009005,Recipient 9005,105 Main St,Apt 5,South Bend,IN,46614,16,12,10,8,true,true,false,Priority Mail,
+940099000000009006,Recipient 9006,106 Main St,,South Bend,IN,46628,2000,50,50,50,false,true,false,Priority Mail,
+940099000000009007,Recipient 9007,P.O. Box 442,,South Bend,IN,46614,16,12,10,8,false,true,false,Priority Mail,
+940099000000009008,Recipient 9008,108 Main St,,South Bend,IN,46614,16,12,10,8,false,false,false,Priority Mail,
+940099000000009009,Recipient 9009,109 Main St,,South Bend,IN,46628,16,12,10,8,false,true,true,Priority Mail,
+940099000000009010,Recipient 9010,999 Rural Route 7,Apt 10,South Bend,IN,46628,16,12,10,8,false,true,false,Priority Mail,
+940099DUPLICATE002,Recipient 9011,111 Main St,,South Bend,IN,46614,16,12,10,8,false,true,false,Priority Mail,
+940099DUPLICATE002,Recipient 9012,112 Main St,,South Bend,IN,46628,16,12,10,8,false,true,false,Priority Mail,

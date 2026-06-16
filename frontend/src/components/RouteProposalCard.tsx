@@ -59,7 +59,15 @@ export function RouteProposalCard({
         <div><strong>{proposal.packageCount}</strong> packages</div>
         <div><strong>{formatDuration(totalDrive)}</strong> drive</div>
         <div><strong>{totalMiles}</strong> mi</div>
+        <div><strong>{proposal.estimatedDurationMinutes}</strong> min total</div>
+        <div><strong>{proposal.capacityPercent}%</strong> capacity</div>
       </div>
+
+      {!proposal.durationFeasible && (
+        <div className="proposal-card__warning">
+          Duration/capacity warning: {proposal.infeasibilityReasons.join("; ")}
+        </div>
+      )}
 
       <details className="proposal-card__details" open>
         <summary>Route path</summary>
@@ -106,7 +114,7 @@ export function RouteProposalCard({
           </label>
           <button
             className="btn-primary"
-            disabled={creating || !routeNumber.trim() || !driverName.trim()}
+            disabled={creating || !routeNumber.trim() || !driverName.trim() || proposal.durationFeasible === false}
             onClick={onCreate}
           >
             {creating ? <><span className="spinner" /> Creating…</> : "Create route →"}

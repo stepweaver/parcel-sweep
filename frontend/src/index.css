@@ -1294,3 +1294,86 @@ label > div:first-child {
   color: #e2e8f0;
   border-color: #475569;
 }
+
+/* ── Sunday ops dashboard ─────────────────────────────────────────────────── */
+
+.sunday-kpi-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  padding: 1rem 1.25rem;
+}
+
+.sunday-kpi-strip > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 5rem;
+}
+
+.sunday-kpi-strip strong {
+  font-size: 1.35rem;
+  line-height: 1.2;
+}
+
+.sunday-kpi-strip span {
+  font-size: .75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.sunday-lane__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.sunday-lane__list li {
+  padding: .45rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: .9rem;
+}
+
+.sunday-lane__count {
+  display: inline-block;
+  min-width: 1.75rem;
+  font-weight: 700;
+  margin-right: .35rem;
+}
+
+.sunday-lane--not-ready { border-top: 3px solid #dc2626; }
+.sunday-lane--ready { border-top: 3px solid #16a34a; }
+.sunday-lane--exception { border-top: 3px solid #f59e0b; }
+
+.manifest-review-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .82rem;
+}
+
+.manifest-review-table th,
+.manifest-review-table td {
+  padding: .4rem .5rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.manifest-review-table tr.row-hold {
+  background: rgba(220, 38, 38, 0.06);
+}
+
+.proposal-card__warning {
+  margin: .75rem 0;
+  padding: .5rem .75rem;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid #f59e0b;
+  font-size: .82rem;
+  color: #92400e;
+}
+
+.dispatch-timers {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  font-size: .9rem;
+}

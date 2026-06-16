@@ -201,14 +201,16 @@ export async function generateManifest(zipCode: string, count: number): Promise<
   const now = new Date().toISOString();
 
   db.prepare(
-    `INSERT INTO manifests (id, zip_code, generated_at, total_packages, status) VALUES (?, ?, ?, ?, 'active')`
-  ).run(manifestId, zipCode, now, sampled.length);
+    `INSERT INTO manifests (id, zip_code, generated_at, total_packages, status, source, hub_id, operation_date, dut_time)
+     VALUES (?, ?, ?, ?, 'active', 'synthetic', 'chippewa', ?, '09:30')`
+  ).run(manifestId, zipCode, now, sampled.length, now.slice(0, 10));
 
   const insertPkg = db.prepare(`
     INSERT INTO packages
       (id, manifest_id, tracking_number, recipient_name, address, city, state, zip,
-       lat, lng, package_count, service_type, weight_oz, status, is_ghost, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'IN', ?, ?, ?, ?, ?, ?, 'pending', 0, ?)
+       lat, lng, package_count, service_type, weight_oz, validation_status, validation_reasons,
+       quarantine_status, sunday_eligible, status, is_ghost, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'IN', ?, ?, ?, ?, ?, ?, 'verified', '[]', 'none', 1, 'pending', 0, ?)
   `);
 
   for (const addr of sampled) {

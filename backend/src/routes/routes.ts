@@ -7,16 +7,19 @@ import { haversineMeters } from "../services/clusterer.js";
 import { planRouteFromPackages, resolveDepot } from "../services/routePlanner.js";
 import { buildGpx, buildKml, buildCsv } from "../services/routeExporter.js";
 import { buildRouteSummaries } from "../services/routeSummaries.js";
+import { manifestHasBlockingHolds } from "../services/sundayDashboard.js";
+import { toPackageDetail } from "../services/packageMappers.js";
+import { SUNDAY_DEFAULTS } from "../config/sundayDefaults.js";
 import {
   PackageRow,
   RouteRow,
   RouteStopRow,
   RouteDetail,
   RouteStopDetail,
-  PackageDetail,
   LoadOrderResponse,
   LoadOrderItem,
   RoutePackagesResponse,
+  ManifestRow,
 } from "../types/index.js";
 
 export function createRoutesRouter(io: SocketServer): Router {
@@ -55,18 +58,6 @@ export function createRoutesRouter(io: SocketServer): Router {
 
   // ── Helpers ──────────────────────────────────────────────
 
-  function toPackageDetail(p: PackageRow): PackageDetail {
-    return {
-      id: p.id, manifestId: p.manifest_id, assignedRouteId: p.assigned_route_id,
-      trackingNumber: p.tracking_number,
-      recipientName: p.recipient_name, address: p.address, city: p.city,
-      state: p.state, zip: p.zip, lat: p.lat, lng: p.lng,
-      packageCount: p.package_count, serviceType: p.service_type,
-      weightOz: p.weight_oz, status: p.status, isGhost: p.is_ghost === 1,
-      createdAt: p.created_at, scannedAt: p.scanned_at, deliveredAt: p.delivered_at,
-    };
-  }
-
   function buildRouteDetail(routeId: string): RouteDetail | null {
     const db = getDb();
     const route = queryOne<RouteRow>(db.prepare(`SELECT * FROM routes WHERE id = ?`), routeId);
@@ -98,6 +89,11 @@ export function createRoutesRouter(io: SocketServer): Router {
       };
     });
 
+    const manifest = queryOne<ManifestRow>(
+      db.prepare(`SELECT dut_time FROM manifests WHERE id = ?`),
+      route.manifest_id
+    );
+
     return {
       id: route.id, manifestId: route.manifest_id, routeNumber: route.route_number,
       driverName: route.driver_name,
@@ -107,7 +103,14 @@ export function createRoutesRouter(io: SocketServer): Router {
       returnDriveSeconds: route.return_drive_seconds ?? 0,
       returnDriveMiles: route.return_drive_miles ?? 0,
       createdAt: route.created_at, optimizedAt: route.optimized_at,
-      completedAt: route.completed_at, stops: stopDetails,
+      completedAt: route.completed_at,
+      beginTourAt: route.begin_tour_at ?? null,
+      loadedAt: route.loaded_at ?? null,
+      departedAt: route.departed_at ?? null,
+      dutTime: manifest?.dut_time ?? null,
+      loadWithinMinutes: SUNDAY_DEFAULTS.loadWithinMinutes,
+      deliverWithinMinutes: SUNDAY_DEFAULTS.deliverWithinMinutes,
+      stops: stopDetails,
     };
   }
 
@@ -430,6 +433,10 @@ export function createRoutesRouter(io: SocketServer): Router {
       }
 
       const now = new Date().toISOString();
+      if (!route.loaded_at) {
+        exec(db.prepare(`UPDATE routes SET loaded_at = ? WHERE id = ?`), now, routeId);
+      }
+
       let pkg = queryOne<PackageRow>(
         db.prepare(`SELECT * FROM packages WHERE tracking_number = ? AND manifest_id = ?`),
         trackingNumber, route.manifest_id
@@ -799,8 +806,39 @@ export function createRoutesRouter(io: SocketServer): Router {
       if (route.status !== "optimized") {
         res.status(409).json({ error: "Route must be optimized before starting delivery." }); return;
       }
-      exec(db.prepare(`UPDATE routes SET status = 'in_delivery' WHERE id = ?`), route.id);
-      res.json({ success: true });
+
+      const holds = manifestHasBlockingHolds(route.manifest_id);
+      if (holds.blocked) {
+        res.status(409).json({
+          error: `Cannot start delivery: ${holds.count} package(s) on hold require supervisor resolution.`,
+        });
+        return;
+      }
+
+      const loadedCount = queryOne<{ cnt: number }>(
+        db.prepare(`
+          SELECT COUNT(*) as cnt FROM packages
+          WHERE assigned_route_id = ? AND status IN ('loaded', 'in_route')
+        `),
+        routeId
+      );
+      if ((loadedCount?.cnt ?? 0) === 0) {
+        res.status(409).json({ error: "Cannot start delivery: no packages loaded on this route." });
+        return;
+      }
+
+      const now = new Date().toISOString();
+      exec(
+        db.prepare(`
+          UPDATE routes
+          SET status = 'in_delivery', begin_tour_at = ?, departed_at = ?
+          WHERE id = ?
+        `),
+        now,
+        now,
+        route.id
+      );
+      res.json({ success: true, beginTourAt: now });
     } catch (err) { next(err); }
   });
 

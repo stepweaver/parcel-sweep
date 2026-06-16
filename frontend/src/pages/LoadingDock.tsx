@@ -133,6 +133,10 @@ export function LoadingDock() {
 
   const isLoading = route.status === "loading";
 
+  const loadElapsed = route.loadedAt
+    ? Math.round((Date.now() - new Date(route.loadedAt).getTime()) / 60000)
+    : null;
+
   return (
     <div className="page">
       <div className="page-header">
@@ -156,6 +160,25 @@ export function LoadingDock() {
           </button>
         </div>
       </div>
+
+      {isLoading && route.dutTime && (
+        <div className="card dispatch-timers" style={{ marginBottom: "1rem" }}>
+          <div><strong>DUT:</strong> {route.dutTime}</div>
+          {route.loadedAt && (
+            <div>
+              <strong>Load timer:</strong> {loadElapsed ?? 0} min
+              {loadElapsed != null && route.loadWithinMinutes && loadElapsed > route.loadWithinMinutes && (
+                <span style={{ color: "#dc2626", marginLeft: ".5rem" }}>
+                  — exceeds {route.loadWithinMinutes}m target
+                </span>
+              )}
+            </div>
+          )}
+          {!route.loadedAt && (
+            <div className="text-muted">First scan starts the 15-minute load window</div>
+          )}
+        </div>
+      )}
 
       {isLoading && (
         <SessionSettings route={route} onUpdated={handleSessionUpdated} />

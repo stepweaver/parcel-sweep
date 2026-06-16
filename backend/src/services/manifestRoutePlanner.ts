@@ -1,10 +1,10 @@
 import { fetchLegMetricsWithFallback } from "./matrixBuilder.js";
 import { planRouteFromPackages, PlannedStop } from "./routePlanner.js";
 import { PackageRow, RouteRow, LatLng, RouteProposal, RouteProposalStop } from "../types/index.js";
+import { SUNDAY_DEFAULTS } from "../config/sundayDefaults.js";
+import { packageIsRoutable } from "./packageMappers.js";
 
 const METERS_PER_MILE = 1609.344;
-const DEFAULT_MAX_PACKAGES = 80;
-const DEFAULT_MAX_STOPS = 40;
 
 export interface ProposeRoutesOptions {
   startAddress: string;
@@ -16,6 +16,9 @@ export interface ProposeRoutesOptions {
   driverCount: number;
   maxPackagesPerRoute?: number;
   maxStopsPerRoute?: number;
+  maxRouteDurationMinutes?: number;
+  sundayMode?: boolean;
+  dwellSecondsPerStop?: number;
 }
 
 function buildSyntheticRoute(
@@ -123,7 +126,13 @@ async function buildProposal(
   index: number,
   stops: PlannedStop[],
   depot: LatLng,
-  osrmBaseUrl: string
+  osrmBaseUrl: string,
+  limits: {
+    maxPackages: number;
+    maxStops: number;
+    maxDurationMinutes: number;
+    dwellSecondsPerStop: number;
+  }
 ): Promise<RouteProposal> {
   const chunkStops = await buildChunkStops(stops, depot, osrmBaseUrl);
   const packageIds = [...new Set(chunkStops.flatMap((s) => s.packageIds))];
@@ -143,6 +152,28 @@ async function buildProposal(
     returnGeometry = returnLeg.geometry ?? null;
   }
 
+  const totalDriveSeconds = driveSeconds + returnDriveSeconds;
+  const dwellSeconds = chunkStops.length * limits.dwellSecondsPerStop;
+  const estimatedDurationMinutes = Math.round((totalDriveSeconds + dwellSeconds) / 60);
+
+  const capacityPercent = Math.max(
+    (packageIds.length / limits.maxPackages) * 100,
+    (chunkStops.length / limits.maxStops) * 100
+  );
+
+  const infeasibilityReasons: string[] = [];
+  if (packageIds.length > limits.maxPackages) {
+    infeasibilityReasons.push(`Exceeds package cap (${packageIds.length}/${limits.maxPackages})`);
+  }
+  if (chunkStops.length > limits.maxStops) {
+    infeasibilityReasons.push(`Exceeds stop cap (${chunkStops.length}/${limits.maxStops})`);
+  }
+  if (estimatedDurationMinutes > limits.maxDurationMinutes) {
+    infeasibilityReasons.push(
+      `Exceeds duration cap (${estimatedDurationMinutes}/${limits.maxDurationMinutes} min)`
+    );
+  }
+
   return {
     proposalId: `proposal_${index + 1}`,
     label: `Driver ${index + 1}`,
@@ -150,9 +181,13 @@ async function buildProposal(
     packageCount: packageIds.length,
     estimatedDriveSeconds: driveSeconds,
     estimatedDriveMiles: Math.round(driveMiles * 100) / 100,
+    estimatedDurationMinutes,
     returnDriveSeconds,
     returnDriveMiles,
     returnGeometry,
+    capacityPercent: Math.round(capacityPercent),
+    durationFeasible: infeasibilityReasons.length === 0,
+    infeasibilityReasons,
     stops: chunkStops,
     packageIds,
   };
@@ -172,6 +207,8 @@ export async function proposeRoutesForManifest(
     driverCount: number;
     maxPackagesPerRoute: number;
     maxStopsPerRoute: number;
+    maxRouteDurationMinutes: number;
+    sundayMode: boolean;
   };
   summary: {
     totalPackages: number;
@@ -179,19 +216,28 @@ export async function proposeRoutesForManifest(
     proposalCount: number;
     unassignedPackages: number;
     alreadyAssignedPackages: number;
+    heldPackages: number;
+    idleDrivers: number;
   };
   proposals: RouteProposal[];
 }> {
-  const valid = packages.filter((p) => p.lat !== 0 && p.lng !== 0 && p.is_ghost === 0);
+  const heldCount = packages.filter((p) => !packageIsRoutable(p)).length;
+  const valid = packages.filter((p) => packageIsRoutable(p));
   if (valid.length === 0) {
-    throw new Error("No geocoded packages on this manifest to plan routes.");
+    throw new Error("No routable packages on this manifest. Resolve held rows first.");
   }
 
   const alreadyAssigned = valid.filter((p) => p.assigned_route_id).length;
   const planPackages = valid.filter((p) => !p.assigned_route_id);
   if (planPackages.length === 0) {
-    throw new Error("All packages on this manifest are already assigned to routes.");
+    throw new Error("All routable packages on this manifest are already assigned to routes.");
   }
+
+  const sundayMode = options.sundayMode !== false;
+  const maxPackages = options.maxPackagesPerRoute ?? SUNDAY_DEFAULTS.maxPackagesPerRoute;
+  const maxStops = options.maxStopsPerRoute ?? SUNDAY_DEFAULTS.maxStopsPerRoute;
+  const maxDurationMinutes = options.maxRouteDurationMinutes ?? SUNDAY_DEFAULTS.maxRouteDurationMinutes;
+  const dwellSecondsPerStop = options.dwellSecondsPerStop ?? SUNDAY_DEFAULTS.dwellSecondsPerStop;
 
   const syntheticRoute = buildSyntheticRoute(manifestId, options);
   const osrmBaseUrl = process.env.OSRM_BASE_URL ?? "http://router.project-osrm.org";
@@ -206,19 +252,21 @@ export async function proposeRoutesForManifest(
   const plan = await planRouteFromPackages(syntheticRoute, planPackages);
 
   const driverCount = Math.max(1, Math.min(Math.floor(options.driverCount), 50));
-  const maxPackages = options.maxPackagesPerRoute ?? DEFAULT_MAX_PACKAGES;
-  const maxStops = options.maxStopsPerRoute ?? DEFAULT_MAX_STOPS;
 
   let chunks = splitStopsByDriverCount(plan.stops, driverCount);
 
-  // Optional safety caps — may produce more routes than drivers if limits are exceeded
-  if (options.maxPackagesPerRoute !== undefined || options.maxStopsPerRoute !== undefined) {
+  // Sunday mode always enforces capacity caps
+  if (sundayMode || options.maxPackagesPerRoute !== undefined || options.maxStopsPerRoute !== undefined) {
     chunks = chunks.flatMap((chunk) => splitStopsIntoChunks(chunk, maxPackages, maxStops));
   }
 
+  const limits = { maxPackages, maxStops, maxDurationMinutes, dwellSecondsPerStop };
   const proposals = await Promise.all(
-    chunks.map((chunk, idx) => buildProposal(idx, chunk, plan.depot, osrmBaseUrl))
+    chunks.map((chunk, idx) => buildProposal(idx, chunk, plan.depot, osrmBaseUrl, limits))
   );
+
+  const unassignedFromCaps = Math.max(0, planPackages.length - proposals.reduce((s, p) => s + p.packageCount, 0));
+  const idleDrivers = Math.max(0, driverCount - proposals.length);
 
   return {
     start: {
@@ -234,13 +282,17 @@ export async function proposeRoutesForManifest(
       driverCount,
       maxPackagesPerRoute: maxPackages,
       maxStopsPerRoute: maxStops,
+      maxRouteDurationMinutes: maxDurationMinutes,
+      sundayMode,
     },
     summary: {
       totalPackages: planPackages.length,
       totalStops: plan.stops.length,
       proposalCount: proposals.length,
-      unassignedPackages: planPackages.length,
+      unassignedPackages: unassignedFromCaps,
       alreadyAssignedPackages: alreadyAssigned,
+      heldPackages: heldCount,
+      idleDrivers,
     },
     proposals,
   };

@@ -67,8 +67,11 @@ export function Dashboard() {
           <div className="page-subtitle">Delivery Route Optimizer</div>
         </div>
         <div className="page-header__actions">
+          <Link to="/sunday">
+            <button className="btn-primary">Sunday Ops</button>
+          </Link>
           <Link to="/manifests/new">
-            <button className="btn-primary">+ Generate Manifest</button>
+            <button className="btn-ghost">+ Manifest</button>
           </Link>
         </div>
       </div>

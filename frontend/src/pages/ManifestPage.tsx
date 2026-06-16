@@ -14,6 +14,7 @@ import { RouteProposalCard } from "../components/RouteProposalCard";
 import {
   DEFAULT_STATION,
   STATIONS,
+  SUNDAY_DEFAULTS,
   getRecentDrivers,
   rememberDriver,
 } from "../config/operations";
@@ -50,6 +51,15 @@ export function ManifestPage() {
   const [assignRouteId, setAssignRouteId] = useState("");
   const [assigningId, setAssigningId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [importMode, setImportMode] = useState<"generate" | "csv">("csv");
+  const [csvText, setCsvText] = useState("");
+  const [hubZip, setHubZip] = useState("46614");
+  const [dutTime, setDutTime] = useState("09:30");
+  const [operationDate, setOperationDate] = useState(new Date().toISOString().slice(0, 10));
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [overridePkgId, setOverridePkgId] = useState<string | null>(null);
+  const [overrideReason, setOverrideReason] = useState("");
 
   const selectedStation = STATIONS.find((s) => s.id === stationId);
   const startAddress = stationId === "custom"
@@ -108,6 +118,10 @@ export function ManifestPage() {
       const result = await api.manifests.proposeRoutes(manifest.id, {
         startAddress,
         driverCount,
+        sundayMode: true,
+        maxPackagesPerRoute: SUNDAY_DEFAULTS.maxPackagesPerRoute,
+        maxStopsPerRoute: SUNDAY_DEFAULTS.maxStopsPerRoute,
+        maxRouteDurationMinutes: SUNDAY_DEFAULTS.maxRouteDurationMinutes,
       });
       setPlanResult(result);
       initProposalForms(result.proposals);
@@ -206,14 +220,140 @@ export function ManifestPage() {
     }
   };
 
+  const handleImportCsv = async () => {
+    if (!csvText.trim()) return;
+    setImporting(true);
+    setImportError(null);
+    try {
+      const { manifest: m, packages: p } = await api.manifests.importCsv({
+        csv: csvText,
+        hubZip,
+        hubId: stationId === "custom" ? "custom" : stationId,
+        operationDate,
+        dutTime,
+      });
+      navigate(`/manifests/${m.id}`);
+      setManifest(m);
+      setPackages(p);
+    } catch (e) {
+      setImportError((e as Error).message);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleCsvFile = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => setCsvText(String(reader.result ?? ""));
+    reader.readAsText(file);
+  };
+
+  const handleOverride = async (packageId: string) => {
+    if (!manifest || !overrideReason.trim()) return;
+    try {
+      const { package: updated } = await api.manifests.overridePackage(
+        manifest.id,
+        packageId,
+        overrideReason.trim()
+      );
+      setPackages((prev) => prev.map((p) => (p.id === packageId ? updated : p)));
+      setOverridePkgId(null);
+      setOverrideReason("");
+    } catch (e) {
+      alert(`Override failed: ${(e as Error).message}`);
+    }
+  };
+
+  const validationStatusLabel = (status?: string) => {
+    switch (status) {
+      case "verified": return "VERIFIED";
+      case "warning": return "REVIEW";
+      case "hold": return "HOLD";
+      case "duplicate": return "DUPLICATE";
+      default: return status?.toUpperCase() ?? "—";
+    }
+  };
+
   if (isNew) {
     return (
       <div className="page">
         <div className="page-header">
           <Link to="/">← Dashboard</Link>
-          <div className="page-title">Generate Manifest</div>
+          <div className="page-title">Manifest Intake</div>
         </div>
 
+        <div style={{ display: "flex", gap: ".5rem", marginBottom: "1rem" }}>
+          <button
+            className={importMode === "csv" ? "btn-primary" : "btn-ghost"}
+            onClick={() => setImportMode("csv")}
+          >
+            CSV Import
+          </button>
+          <button
+            className={importMode === "generate" ? "btn-primary" : "btn-ghost"}
+            onClick={() => setImportMode("generate")}
+          >
+            Synthetic (OSM)
+          </button>
+        </div>
+
+        {importMode === "csv" ? (
+          <div className="card" style={{ maxWidth: 720 }}>
+            <h2 className="panel-title" style={{ marginBottom: "1rem" }}>Import Sunday manifest CSV</h2>
+
+            <div className="grid-2" style={{ marginBottom: ".75rem" }}>
+              <label>
+                <div style={{ fontWeight: 600, marginBottom: ".25rem" }}>Hub ZIP</div>
+                <FriendlyInput
+                  type="text"
+                  inputMode="numeric"
+                  value={hubZip}
+                  onChange={(e) => setHubZip(e.target.value.replace(/\D/g, "").slice(0, 5))}
+                  maxLength={5}
+                />
+              </label>
+              <label>
+                <div style={{ fontWeight: 600, marginBottom: ".25rem" }}>DUT (Distribution Up Time)</div>
+                <FriendlyInput type="time" value={dutTime} onChange={(e) => setDutTime(e.target.value)} />
+              </label>
+            </div>
+
+            <label style={{ display: "block", marginBottom: ".75rem" }}>
+              <div style={{ fontWeight: 600, marginBottom: ".25rem" }}>Operation date</div>
+              <FriendlyInput type="date" value={operationDate} onChange={(e) => setOperationDate(e.target.value)} />
+            </label>
+
+            <label style={{ display: "block", marginBottom: ".75rem" }}>
+              <div style={{ fontWeight: 600, marginBottom: ".25rem" }}>CSV file</div>
+              <input type="file" accept=".csv,text/csv" onChange={(e) => e.target.files?.[0] && handleCsvFile(e.target.files[0])} />
+            </label>
+
+            <textarea
+              value={csvText}
+              onChange={(e) => setCsvText(e.target.value)}
+              placeholder="Or paste CSV content here…"
+              rows={8}
+              style={{ width: "100%", fontFamily: "monospace", fontSize: ".8rem", marginBottom: ".75rem" }}
+            />
+
+            <div style={{ display: "flex", gap: ".75rem", alignItems: "center", flexWrap: "wrap" }}>
+              <a href={api.manifests.importTemplateUrl()} download="manifest-template.csv" className="btn-ghost">
+                Download template
+              </a>
+              <button
+                className="btn-primary"
+                onClick={() => void handleImportCsv()}
+                disabled={importing || !csvText.trim() || hubZip.length !== 5}
+              >
+                {importing ? <><span className="spinner" /> Importing…</> : "Import & validate"}
+              </button>
+            </div>
+
+            {importError && (
+              <div style={{ color: "#dc2626", marginTop: ".75rem", fontSize: ".9rem" }}>{importError}</div>
+            )}
+          </div>
+        ) : (
         <div className="card" style={{ maxWidth: 480 }}>
           <h2 className="panel-title" style={{ marginBottom: "1rem" }}>
             Fetch real addresses from OpenStreetMap
@@ -253,6 +393,7 @@ export function ManifestPage() {
             Uses the free Overpass / OpenStreetMap API. Generation may take 5–15 seconds.
           </div>
         </div>
+        )}
       </div>
     );
   }
@@ -266,6 +407,12 @@ export function ManifestPage() {
   const deliveredCount = packages.filter((p) => p.status === "delivered").length;
   const assignedCount = packages.filter((p) => p.assignedRouteId).length;
   const unassignedCount = packages.length - assignedCount;
+  const heldPackages = packages.filter(
+    (p) => p.quarantineStatus === "hold" || p.validationStatus === "hold" || p.validationStatus === "duplicate"
+  );
+  const reviewPackages = packages.filter(
+    (p) => p.validationStatus && p.validationStatus !== "verified"
+  );
 
   return (
     <div className="page">
@@ -281,6 +428,8 @@ export function ManifestPage() {
           <div className="page-title">Master Manifest — ZIP {manifest.zipCode}</div>
           <div style={{ color: "#6b7280", fontSize: ".85rem" }}>
             {new Date(manifest.generatedAt).toLocaleString()} · {manifest.totalPackages} packages
+            {manifest.source === "csv" && " · CSV import"}
+            {manifest.dutTime && ` · DUT ${manifest.dutTime}`}
             {routes.length > 0 && ` · ${routes.length} route${routes.length === 1 ? "" : "s"}`}
           </div>
         </div>
@@ -295,6 +444,73 @@ export function ManifestPage() {
           </button>
         </div>
       </div>
+
+      {(heldPackages.length > 0 || reviewPackages.length > 0) && (
+        <div className="card" style={{ marginBottom: "1.5rem" }}>
+          <h2 className="panel-title" style={{ marginBottom: ".5rem" }}>Manifest Review</h2>
+          <p className="text-muted" style={{ fontSize: ".85rem", marginBottom: "1rem" }}>
+            {heldPackages.length} on hold · resolve or override before routing held rows
+          </p>
+          <div className="manifest-review-table" style={{ overflowX: "auto" }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Tracking</th>
+                  <th>Address</th>
+                  <th>Status</th>
+                  <th>Hazmat</th>
+                  <th>Oversize</th>
+                  <th>Sunday</th>
+                  <th>Reasons</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reviewPackages.map((p) => (
+                  <tr key={p.id} className={p.quarantineStatus === "hold" ? "row-hold" : ""}>
+                    <td className="mono">{p.trackingNumber.slice(-8)}</td>
+                    <td>{p.address}{p.addressLine2 ? ` ${p.addressLine2}` : ""}</td>
+                    <td>{validationStatusLabel(p.validationStatus)}</td>
+                    <td>{p.hazmatFlag ? "Yes" : "No"}</td>
+                    <td>{p.oversizeFlag ? "Yes" : "No"}</td>
+                    <td>{p.sundayEligible === false ? "No" : "Yes"}</td>
+                    <td className="text-meta">{(p.validationReasons ?? []).join(", ")}</td>
+                    <td>
+                      {p.quarantineStatus === "hold" && (
+                        <button
+                          className="btn-ghost"
+                          style={{ fontSize: ".75rem" }}
+                          onClick={() => setOverridePkgId(p.id)}
+                        >
+                          Override
+                        </button>
+                      )}
+                      {p.quarantineStatus === "released" && (
+                        <span className="text-meta">Released</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {overridePkgId && (
+            <div style={{ marginTop: "1rem", display: "flex", gap: ".5rem", flexWrap: "wrap" }}>
+              <FriendlyInput
+                type="text"
+                value={overrideReason}
+                onChange={(e) => setOverrideReason(e.target.value)}
+                placeholder="Supervisor override reason (required)"
+                style={{ flex: "1 1 240px" }}
+              />
+              <button className="btn-primary" disabled={!overrideReason.trim()} onClick={() => void handleOverride(overridePkgId)}>
+                Release hold
+              </button>
+              <button className="btn-ghost" onClick={() => { setOverridePkgId(null); setOverrideReason(""); }}>Cancel</button>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid-3" style={{ marginBottom: "1.5rem" }}>
         <div className="card stat-card"><div className="stat-value">{pendingCount}</div><div className="stat-label">Pending</div></div>
@@ -458,9 +674,10 @@ export function ManifestPage() {
               {planResult.summary.proposalCount} proposed route{planResult.summary.proposalCount === 1 ? "" : "s"}
             </h2>
             <div className="text-muted" style={{ fontSize: ".85rem" }}>
-              {planResult.summary.totalStops} stops · {planResult.summary.unassignedPackages} packages ·{" "}
+              {planResult.summary.totalStops} stops · {planResult.summary.unassignedPackages} unassigned ·{" "}
+              {planResult.summary.heldPackages} held · {planResult.summary.idleDrivers} idle drivers ·{" "}
               {planResult.settings.driverCount} driver{planResult.settings.driverCount === 1 ? "" : "s"} ·{" "}
-              depot {planResult.start.address}
+              caps {planResult.settings.maxPackagesPerRoute} pkg / {planResult.settings.maxStopsPerRoute} stops / {planResult.settings.maxRouteDurationMinutes} min
             </div>
             {planResult.settings.effectiveClusterMeters > planResult.settings.clusterMeters && (
               <div className="text-muted" style={{ fontSize: ".82rem", marginTop: ".35rem" }}>

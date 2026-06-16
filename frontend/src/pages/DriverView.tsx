@@ -709,6 +709,15 @@ export function DriverView() {
     ? filterFutureNearbyAlerts(activeStop.alerts, activeStop.sequenceNumber, route.stops)
     : [];
 
+  const deliverElapsed = route.beginTourAt
+    ? Math.round((Date.now() - new Date(route.beginTourAt).getTime()) / 60000)
+    : null;
+  const deliverBreached =
+    deliverElapsed != null &&
+    route.deliverWithinMinutes != null &&
+    completedCount === 0 &&
+    deliverElapsed > route.deliverWithinMinutes;
+
   return (
     // position:fixed + inset:0 = immune to browser chrome/address bar changes
     <div className="driver-shell" style={{ position: "fixed", inset: 0, display: "flex", flexDirection: "column", overflow: "hidden", background: "#000", touchAction: "none" }}>
@@ -751,6 +760,11 @@ export function DriverView() {
         <Link to={`/routes/${id}/route`} style={{ color: "#90caf9", fontSize: ".8rem", flexShrink: 0 }}>← Plan</Link>
         <div style={{ flex: 1, color: "#fff", fontWeight: 800, fontSize: "clamp(.85rem, 3.5vw, 1rem)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           {completedCount}/{route.stops.length} stops
+          {deliverElapsed != null && (
+            <span style={{ fontWeight: 400, marginLeft: ".5rem", color: deliverBreached ? "#fca5a5" : "#93c5fd" }}>
+              · {deliverElapsed}m since tour
+            </span>
+          )}
           {distToActive !== null && (
             <span style={{ fontWeight: 400, marginLeft: ".5rem", color: "#93c5fd" }}>
               · {fmtDist(distToActive)} to next

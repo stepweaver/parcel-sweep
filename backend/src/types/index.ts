@@ -93,12 +93,21 @@ export interface OptimizeRouteResponse {
 // Database row types (SQLite)
 // ─────────────────────────────────────────────────────────────
 
+export type ManifestSource = "synthetic" | "csv";
+export type ValidationStatus = "verified" | "warning" | "hold" | "duplicate";
+export type QuarantineStatus = "none" | "hold" | "released";
+
 export interface ManifestRow {
   id: string;
   zip_code: string;
   generated_at: string;
   total_packages: number;
   status: string;
+  source?: ManifestSource;
+  hub_id?: string | null;
+  operation_date?: string | null;
+  dut_time?: string | null;
+  validation_summary?: string | null;
 }
 
 export type PackageStatus = "pending" | "scanned" | "loaded" | "in_route" | "delivered";
@@ -110,6 +119,7 @@ export interface PackageRow {
   tracking_number: string;
   recipient_name: string;
   address: string;
+  address_line_2?: string | null;
   city: string;
   state: string;
   zip: string;
@@ -118,6 +128,22 @@ export interface PackageRow {
   package_count: number;
   service_type: string;
   weight_oz: number;
+  length_in?: number;
+  width_in?: number;
+  height_in?: number;
+  hazmat_flag?: number;
+  oversize_flag?: number;
+  sunday_eligible?: number;
+  pod_required?: number;
+  delivery_notes?: string | null;
+  validation_status?: ValidationStatus;
+  validation_reasons?: string;
+  quarantine_status?: QuarantineStatus;
+  override_note?: string | null;
+  override_by?: string | null;
+  override_at?: string | null;
+  promised_window_start?: string | null;
+  promised_window_end?: string | null;
   status: PackageStatus;
   is_ghost: number; // 0 | 1 (SQLite booleans)
   created_at: string;
@@ -144,6 +170,10 @@ export interface RouteRow {
   created_at: string;
   optimized_at: string | null;
   completed_at: string | null;
+  begin_tour_at?: string | null;
+  loaded_at?: string | null;
+  departed_at?: string | null;
+  sunday_mode?: number;
 }
 
 export type StopStatus = "pending" | "arrived" | "complete";
@@ -184,6 +214,11 @@ export interface ManifestSummary {
   generatedAt: string;
   totalPackages: number;
   status: string;
+  source?: ManifestSource;
+  hubId?: string | null;
+  operationDate?: string | null;
+  dutTime?: string | null;
+  validationSummary?: Record<string, number> | null;
 }
 
 export interface RouteProposalStop {
@@ -204,9 +239,13 @@ export interface RouteProposal {
   packageCount: number;
   estimatedDriveSeconds: number;
   estimatedDriveMiles: number;
+  estimatedDurationMinutes: number;
   returnDriveSeconds: number;
   returnDriveMiles: number;
   returnGeometry: [number, number][] | null;
+  capacityPercent: number;
+  durationFeasible: boolean;
+  infeasibilityReasons: string[];
   stops: RouteProposalStop[];
   packageIds: string[];
 }
@@ -221,6 +260,8 @@ export interface ProposeRoutesResponse {
     driverCount: number;
     maxPackagesPerRoute: number;
     maxStopsPerRoute: number;
+    maxRouteDurationMinutes: number;
+    sundayMode: boolean;
   };
   summary: {
     totalPackages: number;
@@ -228,6 +269,8 @@ export interface ProposeRoutesResponse {
     proposalCount: number;
     unassignedPackages: number;
     alreadyAssignedPackages: number;
+    heldPackages: number;
+    idleDrivers: number;
   };
   proposals: RouteProposal[];
 }
@@ -239,6 +282,7 @@ export interface PackageDetail {
   trackingNumber: string;
   recipientName: string;
   address: string;
+  addressLine2?: string | null;
   city: string;
   state: string;
   zip: string;
@@ -247,6 +291,18 @@ export interface PackageDetail {
   packageCount: number;
   serviceType: string;
   weightOz: number;
+  lengthIn?: number;
+  widthIn?: number;
+  heightIn?: number;
+  hazmatFlag?: boolean;
+  oversizeFlag?: boolean;
+  sundayEligible?: boolean;
+  podRequired?: boolean;
+  deliveryNotes?: string | null;
+  validationStatus?: ValidationStatus;
+  validationReasons?: string[];
+  quarantineStatus?: QuarantineStatus;
+  overrideNote?: string | null;
   status: PackageStatus;
   isGhost: boolean;
   createdAt: string;
@@ -287,6 +343,12 @@ export interface RouteDetail {
   createdAt: string;
   optimizedAt: string | null;
   completedAt: string | null;
+  beginTourAt?: string | null;
+  loadedAt?: string | null;
+  departedAt?: string | null;
+  dutTime?: string | null;
+  loadWithinMinutes?: number;
+  deliverWithinMinutes?: number;
   stops: RouteStopDetail[];
 }
 
@@ -325,4 +387,37 @@ export interface RouteSummary {
   nextStopAddress: string | null;
   nextStopDriveSeconds: number | null;
   nextStopDriveMiles: number | null;
+  beginTourAt?: string | null;
+  loadedAt?: string | null;
+  departedAt?: string | null;
+  loadElapsedMinutes?: number | null;
+  deliverElapsedMinutes?: number | null;
+  loadTimerBreached?: boolean;
+  deliverTimerBreached?: boolean;
+  loadedPackageCount?: number;
+}
+
+export interface ManifestValidationResponse {
+  manifest: ManifestSummary;
+  summary: Record<string, number>;
+  packages: PackageDetail[];
+}
+
+export interface SundayDashboardResponse {
+  hubId: string | null;
+  hubZip: string | null;
+  dutTime: string | null;
+  operationDate: string | null;
+  kpi: {
+    imported: number;
+    validated: number;
+    routed: number;
+    loaded: number;
+    delivered: number;
+    attempted: number;
+    rts: number;
+  };
+  notReady: Array<{ type: string; label: string; count: number; manifestId?: string; routeId?: string }>;
+  readyToDispatch: Array<{ routeId: string; routeNumber: string | null; driverName: string; packageCount: number; manifestId: string }>;
+  inException: Array<{ type: string; label: string; routeId?: string; manifestId?: string; detail?: string }>;
 }

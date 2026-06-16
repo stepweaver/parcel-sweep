@@ -117,6 +117,23 @@ function initSchema(db: DatabaseSync): void {
 }
 
 function migrateSchema(db: DatabaseSync): void {
+  const manifestCols = queryColumnNames(db, "manifests");
+  if (!manifestCols.has("source")) {
+    db.exec(`ALTER TABLE manifests ADD COLUMN source TEXT NOT NULL DEFAULT 'synthetic'`);
+  }
+  if (!manifestCols.has("hub_id")) {
+    db.exec(`ALTER TABLE manifests ADD COLUMN hub_id TEXT`);
+  }
+  if (!manifestCols.has("operation_date")) {
+    db.exec(`ALTER TABLE manifests ADD COLUMN operation_date TEXT`);
+  }
+  if (!manifestCols.has("dut_time")) {
+    db.exec(`ALTER TABLE manifests ADD COLUMN dut_time TEXT`);
+  }
+  if (!manifestCols.has("validation_summary")) {
+    db.exec(`ALTER TABLE manifests ADD COLUMN validation_summary TEXT`);
+  }
+
   const cols = queryColumnNames(db, "routes");
   if (!cols.has("return_drive_seconds")) {
     db.exec(`ALTER TABLE routes ADD COLUMN return_drive_seconds INTEGER NOT NULL DEFAULT 0`);
@@ -127,11 +144,62 @@ function migrateSchema(db: DatabaseSync): void {
   if (!cols.has("route_number")) {
     db.exec(`ALTER TABLE routes ADD COLUMN route_number TEXT`);
   }
+  if (!cols.has("begin_tour_at")) {
+    db.exec(`ALTER TABLE routes ADD COLUMN begin_tour_at TEXT`);
+  }
+  if (!cols.has("loaded_at")) {
+    db.exec(`ALTER TABLE routes ADD COLUMN loaded_at TEXT`);
+  }
+  if (!cols.has("departed_at")) {
+    db.exec(`ALTER TABLE routes ADD COLUMN departed_at TEXT`);
+  }
+  if (!cols.has("sunday_mode")) {
+    db.exec(`ALTER TABLE routes ADD COLUMN sunday_mode INTEGER NOT NULL DEFAULT 1`);
+  }
 
   const packageCols = queryColumnNames(db, "packages");
   if (!packageCols.has("assigned_route_id")) {
     db.exec(`ALTER TABLE packages ADD COLUMN assigned_route_id TEXT`);
   }
+  const pkgMigrations: Array<[string, string]> = [
+    ["address_line_2", "TEXT"],
+    ["validation_status", "TEXT NOT NULL DEFAULT 'verified'"],
+    ["validation_reasons", "TEXT NOT NULL DEFAULT '[]'"],
+    ["hazmat_flag", "INTEGER NOT NULL DEFAULT 0"],
+    ["oversize_flag", "INTEGER NOT NULL DEFAULT 0"],
+    ["sunday_eligible", "INTEGER NOT NULL DEFAULT 1"],
+    ["length_in", "INTEGER NOT NULL DEFAULT 0"],
+    ["width_in", "INTEGER NOT NULL DEFAULT 0"],
+    ["height_in", "INTEGER NOT NULL DEFAULT 0"],
+    ["pod_required", "INTEGER NOT NULL DEFAULT 0"],
+    ["delivery_notes", "TEXT"],
+    ["quarantine_status", "TEXT NOT NULL DEFAULT 'none'"],
+    ["override_note", "TEXT"],
+    ["override_by", "TEXT"],
+    ["override_at", "TEXT"],
+    ["promised_window_start", "TEXT"],
+    ["promised_window_end", "TEXT"],
+  ];
+  for (const [name, def] of pkgMigrations) {
+    if (!packageCols.has(name)) {
+      db.exec(`ALTER TABLE packages ADD COLUMN ${name} ${def}`);
+    }
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS audit_events (
+      id          TEXT PRIMARY KEY,
+      entity_type TEXT NOT NULL,
+      entity_id   TEXT NOT NULL,
+      action      TEXT NOT NULL,
+      actor       TEXT,
+      before_json TEXT,
+      after_json  TEXT,
+      reason      TEXT,
+      created_at  TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_events(entity_type, entity_id);
+  `);
 }
 
 function queryColumnNames(db: DatabaseSync, table: string): Set<string> {

@@ -4,6 +4,7 @@ import { ThemeSelector } from "./components/ThemeSelector";
 import { ThemeProvider } from "./context/ThemeProvider";
 import { Dashboard } from "./pages/Dashboard";
 import { Admin } from "./pages/Admin";
+import { SundayDashboard } from "./pages/SundayDashboard";
 import { ManifestPage } from "./pages/ManifestPage";
 import { LoadingDock } from "./pages/LoadingDock";
 import { RouteView } from "./pages/RouteView";
@@ -23,6 +24,12 @@ function Nav() {
             Dashboard
           </NavLink>
           <NavLink
+            to="/sunday"
+            className={({ isActive }) => (isActive ? "app-nav-link active" : "app-nav-link")}
+          >
+            Sunday Ops
+          </NavLink>
+          <NavLink
             to="/admin"
             className={({ isActive }) => (isActive ? "app-nav-link active" : "app-nav-link")}
           >
@@ -32,7 +39,7 @@ function Nav() {
             to="/manifests/new"
             className={({ isActive }) => (isActive ? "app-nav-link active" : "app-nav-link")}
           >
-            + Generate Manifest
+            + Manifest
           </NavLink>
         </div>
         <ThemeSelector variant="compact" className="app-nav-theme" />
@@ -57,6 +64,7 @@ export default function App() {
               <Nav />
               <Routes>
                 <Route path="/" element={<Dashboard />} />
+                <Route path="/sunday" element={<SundayDashboard />} />
                 <Route path="/admin" element={<Admin />} />
                 <Route path="/manifests/:id" element={<ManifestPage />} />
                 <Route path="/routes/:id/load" element={<LoadingDock />} />

@@ -23,6 +23,15 @@ export const DEFAULT_STATION = STATIONS[0];
 
 export const DEFAULT_DRIVER_NAMES = ["Driver 1", "Driver 2", "Driver 3"];
 
+export const SUNDAY_DEFAULTS = {
+  maxRouteDurationMinutes: 300,
+  maxPackagesPerRoute: 80,
+  maxStopsPerRoute: 40,
+  loadWithinMinutes: 15,
+  deliverWithinMinutes: 45,
+  multiZipCodes: ["46614", "46628"],
+} as const;
+
 const DRIVER_STORAGE_KEY = "parcel-sweep:recent-drivers";
 
 export function getRecentDrivers(): string[] {

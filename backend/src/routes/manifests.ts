@@ -8,50 +8,68 @@ import {
 } from "../services/manifestGenerator.js";
 import { proposeRoutesForManifest } from "../services/manifestRoutePlanner.js";
 import { buildRouteSummaries } from "../services/routeSummaries.js";
+import { importManifestFromCsv, csvTemplate } from "../services/csvImporter.js";
+import { writeAuditEvent } from "../services/auditService.js";
+import { summarizeValidation } from "../services/manifestValidator.js";
+import { toPackageDetail, toManifestSummary } from "../services/packageMappers.js";
 import {
   ManifestRow,
   PackageRow,
-  PackageDetail,
-  ManifestSummary,
   RouteProposal,
   RouteRow,
 } from "../types/index.js";
 
 export const manifestsRouter = Router();
 
-function toPackageDetail(p: PackageRow): PackageDetail {
-  return {
-    id: p.id,
-    manifestId: p.manifest_id,
-    assignedRouteId: p.assigned_route_id,
-    trackingNumber: p.tracking_number,
-    recipientName: p.recipient_name,
-    address: p.address,
-    city: p.city,
-    state: p.state,
-    zip: p.zip,
-    lat: p.lat,
-    lng: p.lng,
-    packageCount: p.package_count,
-    serviceType: p.service_type,
-    weightOz: p.weight_oz,
-    status: p.status,
-    isGhost: p.is_ghost === 1,
-    createdAt: p.created_at,
-    scannedAt: p.scanned_at,
-    deliveredAt: p.delivered_at,
-  };
-}
+/** GET /api/manifests/import/template */
+manifestsRouter.get("/import/template", (_req: Request, res: Response): void => {
+  res.type("text/csv").send(csvTemplate());
+});
 
-function toManifestSummary(m: ManifestRow): ManifestSummary {
-  return {
-    id: m.id,
-    zipCode: m.zip_code,
-    generatedAt: m.generated_at,
-    totalPackages: m.total_packages,
-    status: m.status,
-  };
-}
+/** POST /api/manifests/import */
+manifestsRouter.post(
+  "/import",
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { csv, hubZip, hubId, operationDate, dutTime, actor } = req.body as {
+        csv?: string;
+        hubZip?: string;
+        hubId?: string;
+        operationDate?: string;
+        dutTime?: string;
+        actor?: string;
+      };
+
+      if (!csv?.trim()) {
+        res.status(400).json({ error: "csv text is required." });
+        return;
+      }
+      if (!hubZip || !/^\d{5}$/.test(hubZip)) {
+        res.status(400).json({ error: "hubZip must be a 5-digit ZIP." });
+        return;
+      }
+
+      const result = await importManifestFromCsv(csv, {
+        hubZip,
+        hubId,
+        operationDate,
+        dutTime,
+        actor,
+      });
+
+      const manifest = getManifestWithPackages(result.manifestId)!;
+      res.status(201).json({
+        manifest: toManifestSummary(manifest),
+        packages: manifest.packages.map(toPackageDetail),
+        summary: result.summary,
+        rowCount: result.rowCount,
+        rejectedCount: result.rejectedCount,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 /** POST /api/manifests/generate */
 manifestsRouter.post(
@@ -100,6 +118,96 @@ manifestsRouter.get("/", (_req: Request, res: Response, next: NextFunction): voi
   }
 });
 
+/** GET /api/manifests/:id/validation */
+manifestsRouter.get("/:id/validation", (req: Request, res: Response, next: NextFunction): void => {
+  try {
+    const manifest = getManifestWithPackages(String(req.params["id"]));
+    if (!manifest) {
+      res.status(404).json({ error: "Manifest not found." });
+      return;
+    }
+    const summary = summarizeValidation(
+      manifest.packages.map((p) => ({
+        validationStatus: p.validation_status ?? "verified",
+        quarantineStatus: p.quarantine_status ?? "none",
+      }))
+    );
+    res.json({
+      manifest: toManifestSummary(manifest),
+      summary,
+      packages: manifest.packages.map(toPackageDetail),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** POST /api/manifests/:id/packages/:packageId/override */
+manifestsRouter.post(
+  "/:id/packages/:packageId/override",
+  (req: Request, res: Response, next: NextFunction): void => {
+    try {
+      const manifestId = String(req.params["id"]);
+      const packageId = String(req.params["packageId"]);
+      const { reason, actor } = req.body as { reason?: string; actor?: string };
+
+      if (!reason?.trim()) {
+        res.status(400).json({ error: "Supervisor override reason is required." });
+        return;
+      }
+
+      const db = getDb();
+      const pkg = queryOne<PackageRow>(
+        db.prepare(`SELECT * FROM packages WHERE id = ? AND manifest_id = ?`),
+        packageId,
+        manifestId
+      );
+      if (!pkg) {
+        res.status(404).json({ error: "Package not found." });
+        return;
+      }
+
+      const before = {
+        validationStatus: pkg.validation_status,
+        quarantineStatus: pkg.quarantine_status,
+      };
+      const now = new Date().toISOString();
+      const supervisor = actor?.trim() || "supervisor";
+
+      exec(
+        db.prepare(`
+          UPDATE packages
+          SET quarantine_status = 'released',
+              validation_status = CASE WHEN validation_status = 'duplicate' THEN 'warning' ELSE validation_status END,
+              override_note = ?,
+              override_by = ?,
+              override_at = ?
+          WHERE id = ?
+        `),
+        reason.trim(),
+        supervisor,
+        now,
+        packageId
+      );
+
+      writeAuditEvent({
+        entityType: "package",
+        entityId: packageId,
+        action: "supervisor_override",
+        actor: supervisor,
+        before,
+        after: { quarantineStatus: "released", overrideNote: reason.trim() },
+        reason: reason.trim(),
+      });
+
+      const updated = queryOne<PackageRow>(db.prepare(`SELECT * FROM packages WHERE id = ?`), packageId)!;
+      res.json({ package: toPackageDetail(updated) });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 /** GET /api/manifests/:id/routes */
 manifestsRouter.get("/:id/routes", (req: Request, res: Response, next: NextFunction): void => {
   try {
@@ -138,6 +246,8 @@ manifestsRouter.post(
         driverCount,
         maxPackagesPerRoute,
         maxStopsPerRoute,
+        maxRouteDurationMinutes,
+        sundayMode,
       } = req.body as {
         startAddress?: string;
         clusterMeters?: number;
@@ -145,6 +255,8 @@ manifestsRouter.post(
         driverCount?: number;
         maxPackagesPerRoute?: number;
         maxStopsPerRoute?: number;
+        maxRouteDurationMinutes?: number;
+        sundayMode?: boolean;
       };
 
       if (!startAddress?.trim()) {
@@ -165,6 +277,8 @@ manifestsRouter.post(
         driverCount: parsedDriverCount,
         maxPackagesPerRoute,
         maxStopsPerRoute,
+        maxRouteDurationMinutes,
+        sundayMode: sundayMode !== false,
       });
 
       res.json(result);
@@ -213,6 +327,14 @@ manifestsRouter.post(
         return;
       }
 
+      if (proposal.durationFeasible === false) {
+        res.status(409).json({
+          error: "Cannot create route from infeasible proposal.",
+          reasons: proposal.infeasibilityReasons,
+        });
+        return;
+      }
+
       const db = getDb();
       const manifest = queryOne<ManifestRow>(
         db.prepare(`SELECT id FROM manifests WHERE id = ?`),
@@ -244,6 +366,12 @@ manifestsRouter.post(
           });
           return;
         }
+        if (pkg.quarantine_status === "hold" || pkg.validation_status === "hold" || pkg.validation_status === "duplicate") {
+          res.status(409).json({
+            error: `Package ${pkg.tracking_number} is on hold and cannot be routed without override.`,
+          });
+          return;
+        }
       }
 
       const { resolveAddressCoords } = await import("../services/geocoder.js");
@@ -267,8 +395,8 @@ manifestsRouter.post(
         db.prepare(`
           INSERT INTO routes
             (id, manifest_id, route_number, driver_name, vehicle_id, status, start_address,
-             start_lat, start_lng, cluster_meters, alert_meters, created_at)
-          VALUES (?, ?, ?, ?, ?, 'loading', ?, ?, ?, ?, ?, ?)
+             start_lat, start_lng, cluster_meters, alert_meters, sunday_mode, created_at)
+          VALUES (?, ?, ?, ?, ?, 'loading', ?, ?, ?, ?, ?, 1, ?)
         `),
         routeId,
         manifestId,
@@ -346,7 +474,6 @@ manifestsRouter.delete("/:id", (req: Request, res: Response, next: NextFunction)
 
     db.exec("BEGIN");
     try {
-      // routes.manifest_id has no ON DELETE CASCADE; child stops/pings cascade from routes
       exec(db.prepare(`DELETE FROM routes WHERE manifest_id = ?`), manifestId);
       const changes = exec(db.prepare(`DELETE FROM manifests WHERE id = ?`), manifestId);
       if (changes === 0) {

@@ -6,6 +6,11 @@ export interface ManifestSummary {
   generatedAt: string;
   totalPackages: number;
   status: string;
+  source?: "synthetic" | "csv";
+  hubId?: string | null;
+  operationDate?: string | null;
+  dutTime?: string | null;
+  validationSummary?: Record<string, number> | null;
 }
 
 export interface PackageDetail {
@@ -15,6 +20,7 @@ export interface PackageDetail {
   trackingNumber: string;
   recipientName: string;
   address: string;
+  addressLine2?: string | null;
   city: string;
   state: string;
   zip: string;
@@ -23,6 +29,18 @@ export interface PackageDetail {
   packageCount: number;
   serviceType: string;
   weightOz: number;
+  lengthIn?: number;
+  widthIn?: number;
+  heightIn?: number;
+  hazmatFlag?: boolean;
+  oversizeFlag?: boolean;
+  sundayEligible?: boolean;
+  podRequired?: boolean;
+  deliveryNotes?: string | null;
+  validationStatus?: "verified" | "warning" | "hold" | "duplicate";
+  validationReasons?: string[];
+  quarantineStatus?: "none" | "hold" | "released";
+  overrideNote?: string | null;
   status: "pending" | "scanned" | "loaded" | "in_route" | "delivered";
   isGhost: boolean;
   createdAt: string;
@@ -63,6 +81,12 @@ export interface RouteDetail {
   createdAt: string;
   optimizedAt: string | null;
   completedAt: string | null;
+  beginTourAt?: string | null;
+  loadedAt?: string | null;
+  departedAt?: string | null;
+  dutTime?: string | null;
+  loadWithinMinutes?: number;
+  deliverWithinMinutes?: number;
   stops: RouteStopDetail[];
 }
 
@@ -80,6 +104,14 @@ export interface RouteSummary {
   nextStopAddress: string | null;
   nextStopDriveSeconds: number | null;
   nextStopDriveMiles: number | null;
+  beginTourAt?: string | null;
+  loadedAt?: string | null;
+  departedAt?: string | null;
+  loadElapsedMinutes?: number | null;
+  deliverElapsedMinutes?: number | null;
+  loadTimerBreached?: boolean;
+  deliverTimerBreached?: boolean;
+  loadedPackageCount?: number;
 }
 
 export interface LoadOrderItem {
@@ -120,9 +152,13 @@ export interface RouteProposal {
   packageCount: number;
   estimatedDriveSeconds: number;
   estimatedDriveMiles: number;
+  estimatedDurationMinutes: number;
   returnDriveSeconds: number;
   returnDriveMiles: number;
   returnGeometry: [number, number][] | null;
+  capacityPercent: number;
+  durationFeasible: boolean;
+  infeasibilityReasons: string[];
   stops: RouteProposalStop[];
   packageIds: string[];
 }
@@ -137,6 +173,8 @@ export interface ProposeRoutesResponse {
     driverCount: number;
     maxPackagesPerRoute: number;
     maxStopsPerRoute: number;
+    maxRouteDurationMinutes: number;
+    sundayMode: boolean;
   };
   summary: {
     totalPackages: number;
@@ -144,6 +182,8 @@ export interface ProposeRoutesResponse {
     proposalCount: number;
     unassignedPackages: number;
     alreadyAssignedPackages: number;
+    heldPackages: number;
+    idleDrivers: number;
   };
   proposals: RouteProposal[];
 }
@@ -157,6 +197,31 @@ export interface CreatedRouteFromProposal {
   startAddress: string;
   assignedPackageCount: number;
   proposalId: string;
+}
+
+export interface ManifestValidationResponse {
+  manifest: ManifestSummary;
+  summary: Record<string, number>;
+  packages: PackageDetail[];
+}
+
+export interface SundayDashboardResponse {
+  hubId: string | null;
+  hubZip: string | null;
+  dutTime: string | null;
+  operationDate: string | null;
+  kpi: {
+    imported: number;
+    validated: number;
+    routed: number;
+    loaded: number;
+    delivered: number;
+    attempted: number;
+    rts: number;
+  };
+  notReady: Array<{ type: string; label: string; count: number; manifestId?: string; routeId?: string }>;
+  readyToDispatch: Array<{ routeId: string; routeNumber: string | null; driverName: string; packageCount: number; manifestId: string }>;
+  inException: Array<{ type: string; label: string; routeId?: string; manifestId?: string; detail?: string }>;
 }
 
 const RETRYABLE_STATUSES = new Set([502, 503, 504]);
@@ -213,6 +278,25 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ zipCode, count }),
       }),
+    importCsv: (data: {
+      csv: string;
+      hubZip: string;
+      hubId?: string;
+      operationDate?: string;
+      dutTime?: string;
+    }) =>
+      apiFetch<{ manifest: ManifestSummary; packages: PackageDetail[]; summary: Record<string, number>; rowCount: number }>(
+        "/api/manifests/import",
+        { method: "POST", body: JSON.stringify(data) }
+      ),
+    validation: (id: string) =>
+      apiFetch<ManifestValidationResponse>(`/api/manifests/${id}/validation`),
+    overridePackage: (manifestId: string, packageId: string, reason: string, actor?: string) =>
+      apiFetch<{ package: PackageDetail }>(
+        `/api/manifests/${manifestId}/packages/${packageId}/override`,
+        { method: "POST", body: JSON.stringify({ reason, actor }) }
+      ),
+    importTemplateUrl: () => "/api/manifests/import/template",
     delete: (id: string) => apiFetch<{ deleted: string }>(`/api/manifests/${id}`, { method: "DELETE" }),
     routes: (id: string) => apiFetch<RouteSummary[]>(`/api/manifests/${id}/routes`),
     proposeRoutes: (id: string, data: {
@@ -222,6 +306,8 @@ export const api = {
       alertMeters?: number;
       maxPackagesPerRoute?: number;
       maxStopsPerRoute?: number;
+      maxRouteDurationMinutes?: number;
+      sundayMode?: boolean;
     }) =>
       apiFetch<ProposeRoutesResponse>(`/api/manifests/${id}/propose-routes`, {
         method: "POST",
@@ -305,5 +391,6 @@ export const api = {
 
   admin: {
     routes: () => apiFetch<RouteSummary[]>("/api/admin/routes"),
+    sundayDashboard: () => apiFetch<SundayDashboardResponse>("/api/admin/sunday-dashboard"),
   },
 };
