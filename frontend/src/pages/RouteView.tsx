@@ -6,6 +6,7 @@ import { MapThemeSelector } from "../components/MapThemeSelector";
 import { StopCard } from "../components/StopCard";
 import { LoadOrderList } from "../components/LoadOrderList";
 import { ExportButtons } from "../components/NavigateButtons";
+import { PageShell } from "../components/PageShell";
 import { useMapTheme } from "../hooks/useMapTheme";
 import { googleMapsFullRouteUrl, openExternal } from "../utils/navigationLinks";
 import { filterFutureNearbyAlerts } from "../utils/nearbyAlerts";
@@ -43,8 +44,20 @@ export function RouteView() {
     }
   };
 
-  if (loading) return <div className="page"><span className="spinner" /> Loading…</div>;
-  if (error) return <div className="page" style={{ color: "#dc2626" }}>Error: {error}</div>;
+  if (loading) {
+    return (
+      <PageShell title="Route Plan" documentTitle="Route Plan">
+        <span className="spinner" /> Loading…
+      </PageShell>
+    );
+  }
+  if (error) {
+    return (
+      <PageShell title="Route Plan" documentTitle="Route Plan">
+        <div style={{ color: "#dc2626" }}>Error: {error}</div>
+      </PageShell>
+    );
+  }
   if (!route) return null;
 
   const returnSeconds = route.returnDriveSeconds ?? 0;
@@ -70,28 +83,28 @@ export function RouteView() {
   };
 
   return (
-    <div className="page">
-      <div className="page-header" style={{ flexWrap: "wrap", gap: ".75rem" }}>
-        <Link to={`/routes/${id}/load`}>← Loading Dock</Link>
-        <div>
-          <div className="page-title">Route Plan</div>
-          <div style={{ color: "#6b7280", fontSize: ".85rem" }}>
-            {route.driverName} · {route.stops.length} stops · {totalPkgs} packages
-          </div>
-        </div>
+    <PageShell
+      title="Route Plan"
+      documentTitle={`Route Plan — ${route.driverName}`}
+      backLink={<Link to={`/routes/${id}/load`}>← Loading Dock</Link>}
+      subtitle={
+        <>
+          {route.driverName} · {route.stops.length} stops · {totalPkgs} packages
+        </>
+      }
+      actions={
         <button
-          className="btn-danger page-header__actions"
+          className="btn-danger"
           onClick={handleStart}
           disabled={starting || route.status !== "optimized"}
         >
-          {starting ? <><span className="spinner" /> Starting…</> : "Start Delivery 🚚"}
+          {starting ? <><span className="spinner" /> Starting…</> : "Start Delivery"}
         </button>
-      </div>
-
-      {/* Export + navigation toolbar */}
+      }
+    >
       <div className="card route-toolbar" style={{ marginBottom: "1.5rem" }}>
         <div className="route-toolbar__section">
-          <div style={{ fontWeight: 700, fontSize: ".9rem", marginBottom: ".35rem" }}>Export route</div>
+          <h2 style={{ fontWeight: 700, fontSize: ".9rem", marginBottom: ".35rem" }}>Export route book</h2>
           <ExportButtons routeId={route.id} disabled={!canExport} />
         </div>
         <div className="route-toolbar__section route-toolbar__section--bordered">
@@ -172,6 +185,6 @@ export function RouteView() {
           />
         </div>
       </div>
-    </div>
+    </PageShell>
   );
 }

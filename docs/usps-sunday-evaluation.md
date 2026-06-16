@@ -55,3 +55,24 @@
 ## Post-P0 re-evaluation
 
 Re-run this document's scenario matrix and B1–B10 after P0 implementation. Large (2000) scenarios become unblocked via `testdata/manifests/large-mixed-2000.csv`.
+
+### Certification blocker remediation (2026-06-16)
+
+UI and discoverability updates applied for supervisor acceptance testing:
+
+- Top nav: Dashboard, Sunday Hub, Manifests, Routes & Drivers
+- Dashboard: Sunday Hub entry card + workflow stepper
+- Semantic HTML: `h1`/`main` per page, per-route `document.title`, noscript module list
+- Sunday Hub: readiness clocks, projected vs. actual strip, quick actions
+- Supervisor runbook: `docs/supervisor-acceptance-test.md`
+
+**Re-test checklist:**
+
+| Evaluation blocker | Expected after remediation |
+|---|---|
+| Manifest/Route/Driver not discoverable | Nav + stepper + page headings expose all three |
+| Machine-readable content missing | `h1`, `main`, noscript, dynamic titles |
+| Sunday readiness not verifiable | `/sunday` clocks + exception lanes |
+| Test plan not executable | Follow supervisor-acceptance-test.md |
+
+**Target readiness:** Green for supervised acceptance testing; Amber for operational deployment until AMS/DPV, irregularity taxonomy, and closeout reports land.

@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, NavLink } from "react-router-dom";
+import { BrowserRouter, Routes, Route, NavLink, Link } from "react-router-dom";
 import { AppFooter } from "./components/AppFooter";
 import { ThemeSelector } from "./components/ThemeSelector";
 import { ThemeProvider } from "./context/ThemeProvider";
@@ -14,7 +14,9 @@ function Nav() {
   return (
     <nav className="app-nav">
       <div className="app-nav-inner">
-        <span className="app-nav-brand">📦 Parcel Sweep</span>
+        <Link to="/" className="app-nav-brand" aria-label="Parcel Sweep home">
+          <span aria-hidden="true">📦</span> Parcel Sweep
+        </Link>
         <div className="app-nav-links">
           <NavLink
             to="/"
@@ -27,19 +29,19 @@ function Nav() {
             to="/sunday"
             className={({ isActive }) => (isActive ? "app-nav-link active" : "app-nav-link")}
           >
-            Sunday Ops
-          </NavLink>
-          <NavLink
-            to="/admin"
-            className={({ isActive }) => (isActive ? "app-nav-link active" : "app-nav-link")}
-          >
-            Admin
+            Sunday Hub
           </NavLink>
           <NavLink
             to="/manifests/new"
             className={({ isActive }) => (isActive ? "app-nav-link active" : "app-nav-link")}
           >
-            + Manifest
+            Manifests
+          </NavLink>
+          <NavLink
+            to="/admin"
+            className={({ isActive }) => (isActive ? "app-nav-link active" : "app-nav-link")}
+          >
+            Routes &amp; Drivers
           </NavLink>
         </div>
         <ThemeSelector variant="compact" className="app-nav-theme" />

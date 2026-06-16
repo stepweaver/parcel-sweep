@@ -11,6 +11,7 @@ import {
 import { PackageList } from "../components/PackageList";
 import { FriendlyInput, FriendlyNumberInput } from "../components/FriendlyInput";
 import { RouteProposalCard } from "../components/RouteProposalCard";
+import { PageShell } from "../components/PageShell";
 import {
   DEFAULT_STATION,
   STATIONS,
@@ -276,11 +277,11 @@ export function ManifestPage() {
 
   if (isNew) {
     return (
-      <div className="page">
-        <div className="page-header">
-          <Link to="/">← Dashboard</Link>
-          <div className="page-title">Manifest Intake</div>
-        </div>
+      <PageShell
+        title="Manifest Intake"
+        documentTitle="Manifest Intake"
+        backLink={<Link to="/">← Dashboard</Link>}
+      >
 
         <div style={{ display: "flex", gap: ".5rem", marginBottom: "1rem" }}>
           <button
@@ -299,7 +300,7 @@ export function ManifestPage() {
 
         {importMode === "csv" ? (
           <div className="card" style={{ maxWidth: 720 }}>
-            <h2 className="panel-title" style={{ marginBottom: "1rem" }}>Import Sunday manifest CSV</h2>
+            <h2 className="panel-title" style={{ marginBottom: "1rem" }}>Upload Sunday manifest</h2>
 
             <div className="grid-2" style={{ marginBottom: ".75rem" }}>
               <label>
@@ -394,12 +395,24 @@ export function ManifestPage() {
           </div>
         </div>
         )}
-      </div>
+      </PageShell>
     );
   }
 
-  if (loading) return <div className="page"><span className="spinner" /> Loading…</div>;
-  if (error) return <div className="page" style={{ color: "#dc2626" }}>Error: {error}</div>;
+  if (loading) {
+    return (
+      <PageShell title="Manifest Review" documentTitle="Manifest Review">
+        <span className="spinner" /> Loading…
+      </PageShell>
+    );
+  }
+  if (error) {
+    return (
+      <PageShell title="Manifest Review" documentTitle="Manifest Review">
+        <div style={{ color: "#dc2626" }}>Error: {error}</div>
+      </PageShell>
+    );
+  }
   if (!manifest) return null;
 
   const pendingCount = packages.filter((p) => p.status === "pending").length;
@@ -415,39 +428,39 @@ export function ManifestPage() {
   );
 
   return (
-    <div className="page">
+    <PageShell
+      title={`Manifest Review — ZIP ${manifest.zipCode}`}
+      documentTitle="Manifest Review"
+      backLink={<Link to="/">← Dashboard</Link>}
+      subtitle={
+        <>
+          {new Date(manifest.generatedAt).toLocaleString()} · {manifest.totalPackages} packages
+          {manifest.source === "csv" && " · CSV import"}
+          {manifest.dutTime && ` · DUT ${manifest.dutTime}`}
+          {routes.length > 0 && ` · ${routes.length} route${routes.length === 1 ? "" : "s"}`}
+        </>
+      }
+      actions={
+        <button
+          className="btn-ghost"
+          style={{ color: "#dc2626" }}
+          disabled={deleting}
+          onClick={() => void handleDeleteManifest()}
+        >
+          {deleting ? "Deleting…" : "Delete manifest"}
+        </button>
+      }
+    >
+
       <datalist id="proposal-driver-suggestions">
         {getRecentDrivers().map((d) => (
           <option key={d} value={d} />
         ))}
       </datalist>
 
-      <div className="page-header">
-        <Link to="/">← Dashboard</Link>
-        <div>
-          <div className="page-title">Master Manifest — ZIP {manifest.zipCode}</div>
-          <div style={{ color: "#6b7280", fontSize: ".85rem" }}>
-            {new Date(manifest.generatedAt).toLocaleString()} · {manifest.totalPackages} packages
-            {manifest.source === "csv" && " · CSV import"}
-            {manifest.dutTime && ` · DUT ${manifest.dutTime}`}
-            {routes.length > 0 && ` · ${routes.length} route${routes.length === 1 ? "" : "s"}`}
-          </div>
-        </div>
-        <div className="page-header__actions">
-          <button
-            className="btn-ghost"
-            style={{ color: "#dc2626" }}
-            disabled={deleting}
-            onClick={() => void handleDeleteManifest()}
-          >
-            {deleting ? "Deleting…" : "Delete manifest"}
-          </button>
-        </div>
-      </div>
-
       {(heldPackages.length > 0 || reviewPackages.length > 0) && (
         <div className="card" style={{ marginBottom: "1.5rem" }}>
-          <h2 className="panel-title" style={{ marginBottom: ".5rem" }}>Manifest Review</h2>
+          <h2 className="panel-title" style={{ marginBottom: ".5rem" }}>Validation results</h2>
           <p className="text-muted" style={{ fontSize: ".85rem", marginBottom: "1rem" }}>
             {heldPackages.length} on hold · resolve or override before routing held rows
           </p>
@@ -594,9 +607,10 @@ export function ManifestPage() {
       )}
 
       <div className="card" style={{ marginBottom: "1.5rem" }}>
-        <h2 className="panel-title" style={{ marginBottom: ".5rem" }}>Plan & split routes</h2>
+        <h2 className="panel-title" style={{ marginBottom: ".5rem" }}>Plan &amp; split routes</h2>
         <p className="text-muted" style={{ fontSize: ".85rem", marginBottom: "1rem" }}>
           Optimize all unassigned packages, then split evenly across the available drivers.
+          Sunday caps: {SUNDAY_DEFAULTS.maxPackagesPerRoute} packages · {SUNDAY_DEFAULTS.maxStopsPerRoute} stops · {SUNDAY_DEFAULTS.maxRouteDurationMinutes} min per route.
           {assignedCount > 0 && (
             <> {assignedCount} already assigned · {unassignedCount} remaining to plan.</>
           )}
@@ -671,7 +685,7 @@ export function ManifestPage() {
         <div style={{ marginBottom: "1.5rem" }}>
           <div style={{ marginBottom: "1rem" }}>
             <h2 className="panel-title">
-              {planResult.summary.proposalCount} proposed route{planResult.summary.proposalCount === 1 ? "" : "s"}
+              Assign drivers — {planResult.summary.proposalCount} proposed route{planResult.summary.proposalCount === 1 ? "" : "s"}
             </h2>
             <div className="text-muted" style={{ fontSize: ".85rem" }}>
               {planResult.summary.totalStops} stops · {planResult.summary.unassignedPackages} unassigned ·{" "}
@@ -714,6 +728,6 @@ export function ManifestPage() {
         <h2 className="panel-title" style={{ marginBottom: "1rem" }}>All packages</h2>
         <PackageList packages={packages} />
       </div>
-    </div>
+    </PageShell>
   );
 }

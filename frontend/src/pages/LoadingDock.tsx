@@ -5,6 +5,7 @@ import { ScannerInput } from "../components/ScannerInput";
 import { PackageList } from "../components/PackageList";
 import { LoadOrderList } from "../components/LoadOrderList";
 import { SessionSettings } from "../components/SessionSettings";
+import { PageShell } from "../components/PageShell";
 
 interface ScanResult {
   isGhost: boolean;
@@ -123,8 +124,20 @@ export function LoadingDock() {
     }
   };
 
-  if (loading) return <div className="page"><span className="spinner" /> Loading…</div>;
-  if (error) return <div className="page" style={{ color: "#dc2626" }}>Error: {error}</div>;
+  if (loading) {
+    return (
+      <PageShell title="Loading Dock" documentTitle="Loading Dock">
+        <span className="spinner" /> Loading…
+      </PageShell>
+    );
+  }
+  if (error) {
+    return (
+      <PageShell title="Loading Dock" documentTitle="Loading Dock">
+        <div style={{ color: "#dc2626" }}>Error: {error}</div>
+      </PageShell>
+    );
+  }
   if (!route) return null;
 
   const loadedPackages = routePackages.filter((p) => ["loaded", "in_route"].includes(p.status));
@@ -138,16 +151,17 @@ export function LoadingDock() {
     : null;
 
   return (
-    <div className="page">
-      <div className="page-header">
-        <Link to={`/manifests/${route.manifestId}`}>← Manifest</Link>
-        <div>
-          <div className="page-title">Loading Dock</div>
-          <div className="text-wrap" style={{ color: "#6b7280", fontSize: ".85rem" }}>
-            {route.driverName} · {route.startAddress}
-          </div>
-        </div>
-        <div className="page-header__actions">
+    <PageShell
+      title="Loading Dock"
+      documentTitle={`Loading Dock — ${route.driverName}`}
+      backLink={<Link to={`/manifests/${route.manifestId}`}>← Manifest</Link>}
+      subtitle={
+        <span className="text-wrap">
+          {route.driverName} · {route.startAddress}
+        </span>
+      }
+      actions={
+        <>
           <span className="page-header__meta">
             {loadedPackages.length} loaded
           </span>
@@ -158,8 +172,9 @@ export function LoadingDock() {
           >
             {beginningTour ? <><span className="spinner" /> Preparing tour…</> : "Begin Tour →"}
           </button>
-        </div>
-      </div>
+        </>
+      }
+    >
 
       {isLoading && route.dutTime && (
         <div className="card dispatch-timers" style={{ marginBottom: "1rem" }}>
@@ -189,7 +204,7 @@ export function LoadingDock() {
           <div style={{ fontWeight: 700, marginBottom: ".75rem" }} className="panel-title">Scanner</div>
           <ScannerInput onScan={handleScan} disabled={scanning} />
           {scanHistory.length > 0 && (
-            <div style={{ maxHeight: 180, overflowY: "auto" }}>
+            <div style={{ maxHeight: 180, overflowY: "auto" }} aria-live="polite" aria-relevant="additions">
               {scanHistory.map((r, i) => (
                 <div
                   key={i}
@@ -290,6 +305,6 @@ export function LoadingDock() {
           )}
         </div>
       </div>
-    </div>
+    </PageShell>
   );
 }

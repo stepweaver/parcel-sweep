@@ -68,6 +68,13 @@ export function buildSundayDashboard(): SundayDashboardResponse {
       driverName: r.driverName,
       packageCount: r.loadedPackageCount ?? 0,
       manifestId: r.manifestId,
+      dutTime: activeManifest?.dut_time ?? null,
+      loadElapsedMinutes: r.loadElapsedMinutes ?? null,
+      deliverElapsedMinutes: r.deliverElapsedMinutes ?? null,
+      loadWithinMinutes: SUNDAY_DEFAULTS.loadWithinMinutes,
+      deliverWithinMinutes: SUNDAY_DEFAULTS.deliverWithinMinutes,
+      loadTimerBreached: r.loadTimerBreached ?? false,
+      deliverTimerBreached: r.deliverTimerBreached ?? false,
     }));
 
   const inException: SundayDashboardResponse["inException"] = [];
@@ -114,11 +121,38 @@ export function buildSundayDashboard(): SundayDashboardResponse {
     (p) => p.validation_status === "verified" || p.validation_status === "warning" || p.quarantine_status === "released"
   ).length;
 
+  const activeRouteCount = routes.filter((r) => r.status === "in_delivery").length;
+
+  const activeRoutes: SundayDashboardResponse["activeRoutes"] = routes
+    .filter((r) => ["loading", "optimized", "in_delivery"].includes(r.status))
+    .map((r) => {
+      const routePackages = allPackages.filter((p) => p.assigned_route_id === r.id);
+      return {
+        routeId: r.id,
+        routeNumber: r.routeNumber,
+        driverName: r.driverName,
+        status: r.status,
+        dutTime: activeManifest?.dut_time ?? null,
+        loadedAt: r.loadedAt ?? null,
+        beginTourAt: r.beginTourAt ?? null,
+        loadElapsedMinutes: r.loadElapsedMinutes ?? null,
+        deliverElapsedMinutes: r.deliverElapsedMinutes ?? null,
+        loadWithinMinutes: SUNDAY_DEFAULTS.loadWithinMinutes,
+        deliverWithinMinutes: SUNDAY_DEFAULTS.deliverWithinMinutes,
+        loadTimerBreached: r.loadTimerBreached ?? false,
+        deliverTimerBreached: r.deliverTimerBreached ?? false,
+        packageCount: routePackages.length,
+        deliveredCount: routePackages.filter((p) => p.status === "delivered").length,
+        manifestId: r.manifestId,
+      };
+    });
+
   return {
     hubId: activeManifest?.hub_id ?? null,
     hubZip: activeManifest?.zip_code ?? null,
     dutTime: activeManifest?.dut_time ?? null,
     operationDate: activeManifest?.operation_date ?? null,
+    activeManifestId: manifestId,
     kpi: {
       imported: allPackages.length,
       validated,
@@ -127,10 +161,13 @@ export function buildSundayDashboard(): SundayDashboardResponse {
       delivered,
       attempted: 0,
       rts: 0,
+      routeCount: routes.length,
+      activeRouteCount,
     },
     notReady,
     readyToDispatch,
     inException,
+    activeRoutes,
   };
 }
 

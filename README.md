@@ -54,24 +54,29 @@ Built as a demo and starting point — not production-hardened, but end-to-end a
 ## Workflow
 
 ```
-Generate Manifest → Propose Routes → Create Routes (assign drivers)
+Sunday Hub (supervisor) ← Dashboard workflow stepper
        ↓
-Loading Dock (scan packages, optimize) → Route Plan (review, export)
+Import Manifest (CSV) → Validation results → Plan & split routes → Assign drivers
        ↓
-Start Delivery → Driver View (GPS, alerts, stop completion)
+Loading Dock (scan packages, optimize) → Route Plan (review, export route book)
        ↓
-Admin / Dashboard (monitor fleet progress)
+Start Delivery → Driver View (GPS, demo simulation, stop completion)
+       ↓
+Sunday Hub / Routes & Drivers (monitor fleet, readiness clocks, exceptions)
 ```
 
-| View | Path | Who |
-|------|------|-----|
-| Dashboard | `/` | Dispatcher |
-| Admin | `/admin` | Operations |
-| Generate manifest | `/manifests/new` | Dispatcher |
-| Manifest detail | `/manifests/:id` | Dispatcher |
-| Loading dock | `/routes/:id/load` | Loader |
-| Route plan | `/routes/:id/route` | Dispatcher / driver prep |
-| Driver mode | `/routes/:id/drive` | Driver |
+| View | Path | Nav label | Who |
+|------|------|-----------|-----|
+| Dashboard | `/` | Dashboard | Dispatcher / supervisor entry |
+| Sunday Hub | `/sunday` | Sunday Hub | Supervisor |
+| Manifest intake | `/manifests/new` | Manifests | Dispatcher |
+| Manifest review | `/manifests/:id` | — | Dispatcher |
+| Routes & Drivers | `/admin` | Routes & Drivers | Operations |
+| Loading dock | `/routes/:id/load` | — | Loader |
+| Route plan | `/routes/:id/route` | — | Dispatcher / driver prep |
+| Driver mode | `/routes/:id/drive` | — | Driver |
+
+Supervisor acceptance testing: see [docs/supervisor-acceptance-test.md](docs/supervisor-acceptance-test.md).
 
 ---
 

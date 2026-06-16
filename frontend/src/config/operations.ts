@@ -1,5 +1,8 @@
 /** Station and driver defaults for South Bend operations. */
 
+/** Future role-based landing: "/" for general ops, "/sunday" for supervisor role. */
+export const DEFAULT_LANDING = "/" as const;
+
 export interface StationPreset {
   id: string;
   name: string;

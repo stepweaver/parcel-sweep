@@ -69,6 +69,19 @@
     </script>
   </head>
   <body>
+    <noscript>
+      <div style="max-width: 40rem; margin: 2rem auto; padding: 1.5rem; font-family: system-ui, sans-serif;">
+        <h1>Parcel Sweep — Last-Mile Delivery Route Optimization</h1>
+        <p>JavaScript is required for the interactive operations UI. Core modules:</p>
+        <ul>
+          <li><a href="/">Dashboard</a> — manifests, routes, and workflow overview</li>
+          <li><a href="/sunday">Sunday Hub</a> — supervisor control tower for Sunday parcel operations</li>
+          <li><a href="/manifests/new">Manifests</a> — import and validate Sunday manifest CSV files</li>
+          <li><a href="/admin">Routes &amp; Drivers</a> — fleet view, driver assignment, and route status</li>
+        </ul>
+        <p>Driver delivery mode is available at <code>/routes/:id/drive</code> after route optimization.</p>
+      </div>
+    </noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

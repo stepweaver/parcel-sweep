@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { api, type ManifestSummary, type RouteSummary } from "../api";
+import { Link, NavLink } from "react-router-dom";
+import { api, type ManifestSummary, type RouteSummary, type SundayDashboardResponse } from "../api";
+import { PageShell } from "../components/PageShell";
+import { WorkflowStepper } from "../components/WorkflowStepper";
 import {
   routeHref,
   routeStatusColor,
@@ -12,13 +14,22 @@ import {
 export function Dashboard() {
   const [manifests, setManifests] = useState<ManifestSummary[]>([]);
   const [routes, setRoutes] = useState<RouteSummary[]>([]);
+  const [sunday, setSunday] = useState<SundayDashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const refresh = () =>
-    Promise.all([api.manifests.list(), api.routes.list()])
-      .then(([m, r]) => { setManifests(m); setRoutes(r); });
+    Promise.all([
+      api.manifests.list(),
+      api.routes.list(),
+      api.admin.sundayDashboard().catch(() => null),
+    ])
+      .then(([m, r, s]) => {
+        setManifests(m);
+        setRoutes(r);
+        setSunday(s);
+      });
 
   useEffect(() => {
     refresh()
@@ -58,29 +69,62 @@ export function Dashboard() {
 
   const totalPackages = manifests.reduce((s, m) => s + m.totalPackages, 0);
   const activeRoutes = routes.filter((r) => r.status === "in_delivery").length;
+  const exceptionCount = sunday?.inException.length ?? 0;
 
   return (
-    <div className="page">
-      <div className="page-header">
-        <div>
-          <div className="page-title">Parcel Sweep</div>
-          <div className="page-subtitle">Delivery Route Optimizer</div>
-        </div>
-        <div className="page-header__actions">
-          <Link to="/sunday">
-            <button className="btn-primary">Sunday Ops</button>
-          </Link>
-          <Link to="/manifests/new">
-            <button className="btn-ghost">+ Manifest</button>
-          </Link>
-        </div>
-      </div>
-
+    <PageShell
+      title="Parcel Sweep"
+      subtitle="Delivery Route Optimizer"
+      documentTitle="Dashboard"
+      actions={
+        <>
+          <NavLink to="/sunday" className="btn-primary">
+            Sunday Hub
+          </NavLink>
+          <NavLink to="/manifests/new" className="btn-ghost">
+            Import Manifest
+          </NavLink>
+        </>
+      }
+    >
       {error && <div style={{ color: "#dc2626", marginBottom: "1rem" }}>Error: {error}</div>}
       {loading && <div><span className="spinner" /> Loading…</div>}
 
       {!loading && (
         <>
+          <section className="card sunday-hub-card" aria-labelledby="sunday-hub-heading" style={{ marginBottom: "1.5rem" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1rem", flexWrap: "wrap" }}>
+              <div>
+                <h2 id="sunday-hub-heading" className="panel-title" style={{ marginBottom: ".35rem" }}>
+                  Sunday Hub Operations
+                </h2>
+                <p className="text-muted" style={{ fontSize: ".85rem", margin: 0 }}>
+                  Supervisor control tower for Amazon Sunday parcel delivery — manifests, routes, drivers, and exceptions.
+                </p>
+              </div>
+              <div style={{ display: "flex", gap: ".5rem", flexWrap: "wrap" }}>
+                <NavLink to="/sunday" className="btn-primary">Open Sunday Hub →</NavLink>
+                <NavLink to="/manifests/new" className="btn-ghost">Import Sunday manifest →</NavLink>
+              </div>
+            </div>
+            {sunday && (
+              <div className="sunday-hub-card__stats" style={{ marginTop: "1rem" }}>
+                <span><strong>{sunday.kpi.imported}</strong> imported</span>
+                <span><strong>{sunday.kpi.validated}</strong> validated</span>
+                <span><strong>{sunday.kpi.routed}</strong> routed</span>
+                <span><strong>{sunday.kpi.delivered}</strong> delivered</span>
+                <span><strong>{sunday.kpi.activeRouteCount}</strong> active routes</span>
+                {exceptionCount > 0 && (
+                  <span style={{ color: "#f59e0b" }}><strong>{exceptionCount}</strong> exceptions</span>
+                )}
+              </div>
+            )}
+          </section>
+
+          <div style={{ marginBottom: "1.5rem" }}>
+            <WorkflowStepper manifests={manifests} routes={routes} />
+          </div>
+
           <div className="grid-3" style={{ marginBottom: "1.5rem" }}>
             <div className="card stat-card">
               <div className="stat-value">{manifests.length}</div>
@@ -99,16 +143,15 @@ export function Dashboard() {
           </div>
 
           <div className="grid-2">
-            {/* Manifests panel */}
             <div className="card">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
                 <h2 className="panel-title">Manifests</h2>
-                <Link to="/manifests/new" style={{ fontSize: ".85rem" }}>+ New</Link>
+                <Link to="/manifests/new" style={{ fontSize: ".85rem" }}>Import new</Link>
               </div>
               {manifests.length === 0 ? (
                 <div className="text-meta" style={{ textAlign: "center", padding: "1.5rem" }}>
                   No manifests yet.<br />
-                  <Link to="/manifests/new">Generate one to get started.</Link>
+                  <Link to="/manifests/new">Import a Sunday manifest to get started.</Link>
                 </div>
               ) : (
                 <div>
@@ -150,15 +193,14 @@ export function Dashboard() {
               )}
             </div>
 
-            {/* Routes panel */}
             <div className="card">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
                 <h2 className="panel-title">Routes</h2>
-                <Link to="/admin" style={{ fontSize: ".85rem" }}>Ops view →</Link>
+                <Link to="/admin" style={{ fontSize: ".85rem" }}>Routes &amp; Drivers →</Link>
               </div>
               {routes.length === 0 ? (
                 <div className="text-meta" style={{ textAlign: "center", padding: "1.5rem" }}>
-                  No routes yet.<br />Generate a manifest and start loading.
+                  No routes yet.<br />Import a manifest and plan routes to begin loading.
                 </div>
               ) : (
                 <div>
@@ -193,6 +235,6 @@ export function Dashboard() {
           </div>
         </>
       )}
-    </div>
+    </PageShell>
   );
 }

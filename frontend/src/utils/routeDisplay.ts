@@ -20,6 +20,16 @@ export function routeHref(r: RouteSummary): string {
     : `/routes/${r.id}/load`;
 }
 
+export function routeStageHref(routeId: string, status: string): string {
+  if (status === "in_delivery" || status === "optimized") {
+    return `/routes/${routeId}/drive`;
+  }
+  if (status === "complete") {
+    return `/routes/${routeId}/route`;
+  }
+  return `/routes/${routeId}/load`;
+}
+
 export function routeSubline(r: RouteSummary): string | null {
   if (r.status === "in_delivery" && r.nextStopAddress) {
     return r.nextStopAddress;

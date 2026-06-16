@@ -56,18 +56,19 @@ interface ExportButtonsProps {
 
 export function ExportButtons({ routeId, disabled }: ExportButtonsProps) {
   const formats = [
-    { fmt: "gpx", label: "GPX" },
-    { fmt: "kml", label: "KML" },
-    { fmt: "csv", label: "CSV" },
+    { fmt: "gpx", label: "Export route book (GPX)" },
+    { fmt: "kml", label: "Export route book (KML)" },
+    { fmt: "csv", label: "Export route book (CSV)" },
   ] as const;
 
   return (
-    <div style={{ display: "flex", gap: ".4rem", flexWrap: "wrap" }}>
+    <div style={{ display: "flex", gap: ".4rem", flexWrap: "wrap" }} role="group" aria-label="Export route book">
       {formats.map(({ fmt, label }) => (
         <a
           key={fmt}
           href={disabled ? undefined : `/api/routes/${routeId}/export/${fmt}`}
           download
+          aria-label={label}
           style={{
             ...BTN,
             padding: ".4rem .75rem",

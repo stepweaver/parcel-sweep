@@ -408,6 +408,7 @@ export interface SundayDashboardResponse {
   hubZip: string | null;
   dutTime: string | null;
   operationDate: string | null;
+  activeManifestId: string | null;
   kpi: {
     imported: number;
     validated: number;
@@ -416,8 +417,41 @@ export interface SundayDashboardResponse {
     delivered: number;
     attempted: number;
     rts: number;
+    routeCount: number;
+    activeRouteCount: number;
   };
   notReady: Array<{ type: string; label: string; count: number; manifestId?: string; routeId?: string }>;
-  readyToDispatch: Array<{ routeId: string; routeNumber: string | null; driverName: string; packageCount: number; manifestId: string }>;
+  readyToDispatch: Array<{
+    routeId: string;
+    routeNumber: string | null;
+    driverName: string;
+    packageCount: number;
+    manifestId: string;
+    dutTime?: string | null;
+    loadElapsedMinutes?: number | null;
+    deliverElapsedMinutes?: number | null;
+    loadWithinMinutes?: number;
+    deliverWithinMinutes?: number;
+    loadTimerBreached?: boolean;
+    deliverTimerBreached?: boolean;
+  }>;
   inException: Array<{ type: string; label: string; routeId?: string; manifestId?: string; detail?: string }>;
+  activeRoutes: Array<{
+    routeId: string;
+    routeNumber: string | null;
+    driverName: string;
+    status: string;
+    dutTime: string | null;
+    loadedAt: string | null;
+    beginTourAt: string | null;
+    loadElapsedMinutes: number | null;
+    deliverElapsedMinutes: number | null;
+    loadWithinMinutes: number;
+    deliverWithinMinutes: number;
+    loadTimerBreached: boolean;
+    deliverTimerBreached: boolean;
+    packageCount: number;
+    deliveredCount: number;
+    manifestId: string;
+  }>;
 }
