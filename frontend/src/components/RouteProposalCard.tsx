@@ -15,6 +15,7 @@ interface RouteProposalCardProps {
   onCreate: () => void;
   creating: boolean;
   created: boolean;
+  disabled?: boolean;
 }
 
 function formatDuration(seconds: number): string {
@@ -37,6 +38,7 @@ export function RouteProposalCard({
   onCreate,
   creating,
   created,
+  disabled = false,
 }: RouteProposalCardProps) {
   const totalDrive = proposal.estimatedDriveSeconds + proposal.returnDriveSeconds;
   const totalMiles =
@@ -114,10 +116,10 @@ export function RouteProposalCard({
           </label>
           <button
             className="btn-primary"
-            disabled={creating || !routeNumber.trim() || !driverName.trim() || proposal.durationFeasible === false}
+            disabled={disabled || creating || !routeNumber.trim() || !driverName.trim() || proposal.durationFeasible === false}
             onClick={onCreate}
           >
-            {creating ? <><span className="spinner" /> Creating…</> : "Create route →"}
+            {creating ? <><span className="spinner" /> Creating…</> : "Create route"}
           </button>
         </div>
       )}

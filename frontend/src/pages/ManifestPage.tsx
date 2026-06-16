@@ -46,6 +46,7 @@ export function ManifestPage() {
   const [planResult, setPlanResult] = useState<ProposeRoutesResponse | null>(null);
   const [createdProposals, setCreatedProposals] = useState<Set<string>>(new Set());
   const [creatingProposalId, setCreatingProposalId] = useState<string | null>(null);
+  const [creatingAll, setCreatingAll] = useState(false);
   const [proposalForms, setProposalForms] = useState<
     Record<string, { driverName: string; routeNumber: string }>
   >({});
@@ -133,6 +134,32 @@ export function ManifestPage() {
     }
   };
 
+  const pendingProposals =
+    planResult?.proposals.filter(
+      (p) => !createdProposals.has(p.proposalId) && p.durationFeasible !== false
+    ) ?? [];
+
+  const allPendingFormsValid = pendingProposals.every((p) => {
+    const form = proposalForms[p.proposalId];
+    return form?.routeNumber.trim() && form?.driverName.trim();
+  });
+
+  const createRouteFromProposal = async (proposal: RouteProposal) => {
+    if (!manifest) throw new Error("Manifest not loaded.");
+    const form = proposalForms[proposal.proposalId];
+    if (!form?.routeNumber.trim()) throw new Error("Route number is required.");
+    rememberDriver(form.driverName);
+    await api.manifests.createRouteFromProposal(manifest.id, {
+      startAddress,
+      driverName: form.driverName,
+      routeNumber: form.routeNumber.trim(),
+      clusterMeters: planResult?.settings.clusterMeters,
+      alertMeters: planResult?.settings.alertMeters,
+      proposal,
+    });
+    setCreatedProposals((prev) => new Set(prev).add(proposal.proposalId));
+  };
+
   const handleCreateFromProposal = async (proposal: RouteProposal) => {
     if (!manifest) return;
     const form = proposalForms[proposal.proposalId];
@@ -140,22 +167,31 @@ export function ManifestPage() {
 
     setCreatingProposalId(proposal.proposalId);
     try {
-      rememberDriver(form.driverName);
-      const created = await api.manifests.createRouteFromProposal(manifest.id, {
-        startAddress,
-        driverName: form.driverName,
-        routeNumber: form.routeNumber.trim(),
-        clusterMeters: planResult?.settings.clusterMeters,
-        alertMeters: planResult?.settings.alertMeters,
-        proposal,
-      });
-      setCreatedProposals((prev) => new Set(prev).add(proposal.proposalId));
+      await createRouteFromProposal(proposal);
       await refreshManifest(manifest.id);
-      navigate(`/routes/${created.id}/load`);
     } catch (e) {
       alert(`Error: ${(e as Error).message}`);
     } finally {
       setCreatingProposalId(null);
+    }
+  };
+
+  const handleCreateAllFromProposals = async () => {
+    if (!manifest || pendingProposals.length === 0 || !allPendingFormsValid) return;
+
+    setCreatingAll(true);
+    try {
+      for (const proposal of pendingProposals) {
+        setCreatingProposalId(proposal.proposalId);
+        await createRouteFromProposal(proposal);
+      }
+      await refreshManifest(manifest.id);
+    } catch (e) {
+      alert(`Error: ${(e as Error).message}`);
+      await refreshManifest(manifest.id);
+    } finally {
+      setCreatingProposalId(null);
+      setCreatingAll(false);
     }
   };
 
@@ -698,6 +734,31 @@ export function ManifestPage() {
                 Cluster radius auto-raised to {planResult.settings.effectiveClusterMeters}m for large manifest.
               </div>
             )}
+            {pendingProposals.length > 1 && (
+              <div style={{ marginTop: "1rem", display: "flex", gap: ".75rem", alignItems: "center", flexWrap: "wrap" }}>
+                <button
+                  className="btn-primary"
+                  disabled={creatingAll || creatingProposalId !== null || !allPendingFormsValid}
+                  onClick={() => void handleCreateAllFromProposals()}
+                >
+                  {creatingAll ? (
+                    <><span className="spinner" /> Creating {pendingProposals.length} routes…</>
+                  ) : (
+                    `Create all ${pendingProposals.length} routes →`
+                  )}
+                </button>
+                {!allPendingFormsValid && (
+                  <span className="text-muted" style={{ fontSize: ".85rem" }}>
+                    Enter a route number and driver for each proposal.
+                  </span>
+                )}
+              </div>
+            )}
+            {pendingProposals.length === 0 && planResult.proposals.length > 0 && (
+              <div className="text-muted" style={{ fontSize: ".85rem", marginTop: ".75rem" }}>
+                All proposed routes have been created — see &ldquo;Routes on this manifest&rdquo; above to open load screens.
+              </div>
+            )}
           </div>
           <div className="proposal-grid">
             {planResult.proposals.map((proposal, idx) => {
@@ -717,6 +778,7 @@ export function ManifestPage() {
                   onCreate={() => void handleCreateFromProposal(proposal)}
                   creating={creatingProposalId === proposal.proposalId}
                   created={createdProposals.has(proposal.proposalId)}
+                  disabled={creatingAll}
                 />
               );
             })}
