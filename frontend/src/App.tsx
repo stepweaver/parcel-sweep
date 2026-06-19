@@ -9,6 +9,7 @@ import { ManifestPage } from "./pages/ManifestPage";
 import { LoadingDock } from "./pages/LoadingDock";
 import { RouteView } from "./pages/RouteView";
 import { DriverView } from "./pages/DriverView";
+import { CarrierJournalPage } from "./pages/CarrierJournalPage";
 
 function Nav() {
   return (
@@ -43,6 +44,12 @@ function Nav() {
           >
             Routes &amp; Drivers
           </NavLink>
+          <NavLink
+            to="/carrier-journal"
+            className={({ isActive }) => (isActive ? "app-nav-link active" : "app-nav-link")}
+          >
+            Carrier&apos;s Log
+          </NavLink>
         </div>
         <ThemeSelector variant="compact" className="app-nav-theme" />
       </div>
@@ -68,6 +75,7 @@ export default function App() {
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/sunday" element={<SundayDashboard />} />
                 <Route path="/admin" element={<Admin />} />
+                <Route path="/carrier-journal" element={<CarrierJournalPage />} />
                 <Route path="/manifests/:id" element={<ManifestPage />} />
                 <Route path="/routes/:id/load" element={<LoadingDock />} />
                 <Route path="/routes/:id/route" element={<RouteView />} />
