@@ -1,9 +1,5 @@
 // Typed API helpers — all requests proxy through Vite to localhost:3000
 
-import type { CarrierDispatch } from "./types/carrierJournal";
-
-export type { CarrierDispatch, MailLoad } from "./types/carrierJournal";
-
 export interface ManifestSummary {
   id: string;
   zipCode: string;
@@ -430,12 +426,5 @@ export const api = {
   admin: {
     routes: () => apiFetch<RouteSummary[]>("/api/admin/routes"),
     sundayDashboard: () => apiFetch<SundayDashboardResponse>("/api/admin/sunday-dashboard"),
-  },
-
-  carrierJournal: {
-    dispatches: () =>
-      apiFetch<{ dispatches: CarrierDispatch[]; source: string }>(
-        "/api/carrier-journal/dispatches"
-      ),
   },
 };

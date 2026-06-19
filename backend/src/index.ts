@@ -14,7 +14,6 @@ import { manifestsRouter } from "./routes/manifests.js";
 import { createRoutesRouter } from "./routes/routes.js";
 import { packagesRouter } from "./routes/packages.js";
 import { adminRouter } from "./routes/admin.js";
-import { carrierJournalRouter } from "./routes/carrierJournal.js";
 
 function resolveFrontendOrigin(): string {
   if (process.env.FRONTEND_ORIGIN) return process.env.FRONTEND_ORIGIN;
@@ -86,7 +85,6 @@ app.use("/api/optimize-route", optimizeRouteRouter);
 app.use("/api/manifests", manifestsRouter);
 app.use("/api/routes", createRoutesRouter(io));
 app.use("/api/admin", adminRouter);
-app.use("/api/carrier-journal", carrierJournalRouter);
 app.use("/api/packages", packagesRouter);
 
 // ── Production frontend (Vite build) ─────────────────────────
