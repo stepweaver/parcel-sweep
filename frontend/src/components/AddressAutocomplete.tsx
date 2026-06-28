@@ -233,22 +233,7 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
           <ul
             ref={dropdownRef}
             role="listbox"
-            style={{
-              position: "absolute",
-              top: "calc(100% + 4px)",
-              left: 0,
-              right: 0,
-              margin: 0,
-              padding: 0,
-              listStyle: "none",
-              background: "var(--surface)",
-              border: "1.5px solid var(--usps-blue)",
-              borderRadius: "var(--radius)",
-              boxShadow: "var(--shadow-lg)",
-              zIndex: 300,
-              maxHeight: 280,
-              overflowY: "auto",
-            }}
+            className="address-autocomplete-dropdown"
           >
             {suggestions.map((s, i) => {
               const commaIdx = s.displayName.indexOf(",");
@@ -265,13 +250,6 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
                     selectSuggestion(s);
                   }}
                   onMouseEnter={() => setActiveIdx(i)}
-                  style={{
-                    padding: ".55rem .75rem",
-                    cursor: "pointer",
-                    background: i === activeIdx ? "var(--hover-bg)" : "transparent",
-                    borderBottom:
-                      i < suggestions.length - 1 ? "1px solid var(--row-border)" : "none",
-                  }}
                 >
                   <div
                     style={{

@@ -1309,6 +1309,43 @@ select:focus {
   box-shadow: 0 0 0 2px rgba(94, 179, 232, 0.1);
 }
 
+.address-autocomplete-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  z-index: 300;
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1.5px solid var(--usps-blue);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+}
+
+[data-theme="dark"] .address-autocomplete-dropdown {
+  background: rgba(20, 28, 36, 0.92);
+}
+
+.address-autocomplete-dropdown [role="option"] {
+  padding: 0.55rem 0.75rem;
+  cursor: pointer;
+  border-bottom: 1px solid var(--row-border);
+}
+
+.address-autocomplete-dropdown [role="option"]:last-child {
+  border-bottom: none;
+}
+
+.address-autocomplete-dropdown [role="option"][aria-selected="true"] {
+  background: var(--hover-bg);
+}
+
 label > div:first-child {
   font-family: var(--font-ocr);
   font-size: 0.62rem;
