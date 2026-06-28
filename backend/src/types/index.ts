@@ -9,6 +9,8 @@ export interface StopInput {
 
 export interface OptimizeRouteRequest {
   startAddress: string;
+  /** Pre-resolved start coordinates — when provided, skips geocoding startAddress. */
+  startCoords?: { lat: number; lng: number };
   /** Maximum metres between two stops to be merged into one cluster. Default 50. */
   clusterMeters?: number;
   /** Maximum metres to a stop in another cluster before emitting a nearby-package alert. Default 120. */

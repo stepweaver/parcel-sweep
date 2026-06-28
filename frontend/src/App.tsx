@@ -9,6 +9,7 @@ import { ManifestPage } from "./pages/ManifestPage";
 import { LoadingDock } from "./pages/LoadingDock";
 import { RouteView } from "./pages/RouteView";
 import { DriverView } from "./pages/DriverView";
+import { QuickRoutePage } from "./pages/QuickRoutePage";
 
 function Nav() {
   return (
@@ -43,6 +44,12 @@ function Nav() {
           >
             Routes &amp; Drivers
           </NavLink>
+          <NavLink
+            to="/quick-route"
+            className={({ isActive }) => (isActive ? "app-nav-link active" : "app-nav-link")}
+          >
+            Quick Route
+          </NavLink>
         </div>
         <ThemeSelector variant="compact" className="app-nav-theme" />
       </div>
@@ -71,6 +78,7 @@ export default function App() {
                 <Route path="/manifests/:id" element={<ManifestPage />} />
                 <Route path="/routes/:id/load" element={<LoadingDock />} />
                 <Route path="/routes/:id/route" element={<RouteView />} />
+                <Route path="/quick-route" element={<QuickRoutePage />} />
               </Routes>
               <AppFooter />
             </>

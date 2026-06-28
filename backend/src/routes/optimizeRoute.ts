@@ -45,10 +45,15 @@ optimizeRouteRouter.post(
         process.env.OSRM_BASE_URL ?? "http://router.project-osrm.org";
 
       // --- 1. Geocode all addresses (Google if configured, else OpenStreetMap) ---
-      const { start, stops: geocodedStops } = await geocodeAll(
+      //        If pre-resolved start coordinates are supplied, use them for the depot
+      //        (avoids a round-trip geocode for the start point).
+      const { start: geocodedStart, stops: geocodedStops } = await geocodeAll(
         body.startAddress,
         body.stops
       );
+      const start = body.startCoords
+        ? { ...geocodedStart, lat: body.startCoords.lat, lng: body.startCoords.lng }
+        : geocodedStart;
 
       // --- 2. Cluster stops by proximity ---
       const clusters = clusterStops(geocodedStops, clusterMeters);

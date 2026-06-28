@@ -258,6 +258,48 @@ export interface SundayDashboardResponse {
   }>;
 }
 
+export interface QuickRouteStopInput {
+  address: string;
+}
+
+export interface QuickRouteRequest {
+  startAddress: string;
+  startCoords?: { lat: number; lng: number };
+  stops: QuickRouteStopInput[];
+  clusterMeters?: number;
+  alertMeters?: number;
+}
+
+export interface QuickRouteStepStop {
+  address: string;
+  packageCount: number;
+  lat: number;
+  lng: number;
+}
+
+export interface QuickRouteStep {
+  sequence: number;
+  clusterId: string;
+  driveSecondsFromPrevious: number;
+  driveMilesFromPrevious: number;
+  centroid: { lat: number; lng: number };
+  stops: QuickRouteStepStop[];
+  alerts: string[];
+}
+
+export interface QuickRouteResponse {
+  start: { address: string; lat: number; lng: number };
+  settings: { clusterMeters: number; alertMeters: number };
+  summary: {
+    totalInputStops: number;
+    totalClusters: number;
+    totalPackages: number;
+    estimatedDriveSeconds: number;
+    estimatedDriveMiles: number;
+  };
+  route: QuickRouteStep[];
+}
+
 const RETRYABLE_STATUSES = new Set([502, 503, 504]);
 const MAX_FETCH_ATTEMPTS = 6;
 const RETRY_BASE_MS = 400;
@@ -426,5 +468,13 @@ export const api = {
   admin: {
     routes: () => apiFetch<RouteSummary[]>("/api/admin/routes"),
     sundayDashboard: () => apiFetch<SundayDashboardResponse>("/api/admin/sunday-dashboard"),
+  },
+
+  quickRoute: {
+    optimize: (data: QuickRouteRequest) =>
+      apiFetch<QuickRouteResponse>("/api/optimize-route", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
   },
 };
