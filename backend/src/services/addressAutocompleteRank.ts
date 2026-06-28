@@ -108,7 +108,17 @@ export function hasFullCardinal(streetPart: string): boolean {
   return FULL_CARDINAL.test(streetPart);
 }
 
-export function expandSearchQueries(q: string, city: string, state: string): string[] {
+export function expandSearchQueries(
+  q: string,
+  city: string,
+  state: string,
+  serviceAreaOnly = true
+): string[] {
+  const trimmed = q.replace(/\s+/g, " ").trim();
+  if (!serviceAreaOnly) {
+    return trimmed.length >= 3 ? [trimmed] : [];
+  }
+
   const parsed = parsePartialAddress(q);
   const locality = `${city} ${state}`;
   const ordered: string[] = [];
@@ -432,9 +442,19 @@ export function autocompleteCacheKey(opts: {
   near?: { lat: number; lng: number };
   city?: string;
   state?: string;
+  serviceAreaOnly?: boolean;
 }): string {
   const near = opts.near ? locationBucket(opts.near.lat, opts.near.lng) : "";
-  return `${opts.q.toLowerCase()}|${near}|${opts.city ?? ""}|${opts.state ?? ""}`;
+  const area = opts.serviceAreaOnly === false ? "all" : "local";
+  return `${opts.q.toLowerCase()}|${near}|${opts.city ?? ""}|${opts.state ?? ""}|${area}`;
+}
+
+/** Likely a full address outside the default service area — retry without local filters. */
+export function shouldRetryNationwide(q: string, city: string): boolean {
+  const lower = q.toLowerCase();
+  if (lower.includes(",")) return !lower.includes(city.toLowerCase());
+  if (/\b\d{5}(?:-\d{4})?\b/.test(q)) return !/\b466\d{2}\b/.test(q);
+  return q.trim().length >= 12;
 }
 
 export class LruCache<T> {

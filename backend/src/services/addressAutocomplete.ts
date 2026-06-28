@@ -7,6 +7,7 @@ import {
   expandSearchQueries,
   mergeAndRank,
   parsePartialAddress,
+  shouldRetryNationwide,
 } from "./addressAutocompleteRank.js";
 import { nominatimGate } from "./providerRateLimit.js";
 
@@ -48,6 +49,8 @@ export interface AutocompleteOptions {
   near?: { lat: number; lng: number };
   city?: string;
   state?: string;
+  /** When false, search US-wide (for custom start points outside South Bend). Default true. */
+  serviceAreaOnly?: boolean;
 }
 
 interface PhotonFeature {
@@ -163,7 +166,8 @@ async function googleAutocomplete(
   queries: string[],
   near: { lat: number; lng: number },
   stateAbbr: string,
-  limit: number
+  limit: number,
+  serviceAreaOnly: boolean
 ): Promise<RankCandidate[]> {
   const apiKey = process.env.GOOGLE_GEOCODING_API_KEY?.trim();
   if (!apiKey) return [];
@@ -180,8 +184,10 @@ async function googleAutocomplete(
             input,
             key: apiKey,
             location: `${near.lat},${near.lng}`,
-            radius: 50000,
-            components: `country:us|administrative_area:${stateAbbr}`,
+            radius: serviceAreaOnly ? 50000 : 500000,
+            components: serviceAreaOnly
+              ? `country:us|administrative_area:${stateAbbr}`
+              : "country:us",
             types: "address",
           },
           timeout: 3500,
@@ -222,22 +228,33 @@ async function googleAutocomplete(
 
 async function photonSearch(
   query: string,
-  near: { lat: number; lng: number },
-  fetchLimit: number
+  near: { lat: number; lng: number } | undefined,
+  fetchLimit: number,
+  serviceAreaOnly: boolean
 ): Promise<RankCandidate[]> {
+  const params: Record<string, string | number> = {
+    q: query,
+    limit: fetchLimit,
+  };
+  if (near) {
+    params.lat = near.lat;
+    params.lon = near.lng;
+  }
+  if (serviceAreaOnly) {
+    params.bbox = SERVICE_BBOX;
+  }
+
   const response = await axios.get<PhotonResponse>(PHOTON_URL, {
-    params: {
-      q: query,
-      lat: near.lat,
-      lon: near.lng,
-      bbox: SERVICE_BBOX,
-      limit: fetchLimit,
-    },
+    params,
     timeout: 3500,
   });
 
   return response.data.features
-    .filter((f) => isInServiceArea(f.properties))
+    .filter((f) =>
+      serviceAreaOnly
+        ? isInServiceArea(f.properties)
+        : (f.properties.countrycode ?? "us").toLowerCase() === "us"
+    )
     .map((f) => ({
       placeId: `${f.properties.osm_type}-${f.properties.osm_id}`,
       displayName: buildPhotonDisplayName(f.properties),
@@ -253,22 +270,27 @@ async function photonSearch(
 
 async function nominatimSearch(
   query: string,
-  near: { lat: number; lng: number },
-  fetchLimit: number
+  near: { lat: number; lng: number } | undefined,
+  fetchLimit: number,
+  serviceAreaOnly: boolean
 ): Promise<RankCandidate[]> {
-  const delta = 0.22;
+  const delta = serviceAreaOnly ? 0.22 : 2.5;
+  const params: Record<string, string | number> = {
+    q: query,
+    format: "json",
+    addressdetails: 1,
+    countrycodes: "us",
+    limit: fetchLimit,
+  };
+  if (near) {
+    params.lat = near.lat;
+    params.lon = near.lng;
+    params.viewbox = `${near.lng - delta},${near.lat + delta},${near.lng + delta},${near.lat - delta}`;
+    params.bounded = 0;
+  }
+
   const response = await axios.get<NominatimResult[]>(NOMINATIM_SEARCH_URL, {
-    params: {
-      q: query,
-      format: "json",
-      addressdetails: 1,
-      countrycodes: "us",
-      lat: near.lat,
-      lon: near.lng,
-      viewbox: `${near.lng - delta},${near.lat + delta},${near.lng + delta},${near.lat - delta}`,
-      bounded: 0,
-      limit: fetchLimit,
-    },
+    params,
     headers: { "User-Agent": NOMINATIM_USER_AGENT },
     timeout: 4000,
   });
@@ -276,6 +298,7 @@ async function nominatimSearch(
   return response.data
     .filter((r) => r.address?.road || r.address?.house_number)
     .filter((r) => {
+      if (!serviceAreaOnly) return true;
       const city = (r.address?.city ?? r.address?.town ?? "").toLowerCase();
       const state = r.address?.state ?? "";
       const zip = r.address?.postcode ?? "";
@@ -296,28 +319,55 @@ async function nominatimSearch(
 
 async function osmAutocomplete(
   queries: string[],
-  near: { lat: number; lng: number },
-  limit: number
+  near: { lat: number; lng: number } | undefined,
+  limit: number,
+  serviceAreaOnly: boolean
 ): Promise<RankCandidate[]> {
   const perQuery = limit + 6;
   const primaryQuery = queries[0];
   if (!primaryQuery) return [];
 
+  const photonQueries = serviceAreaOnly ? queries.slice(0, 3) : queries.slice(0, 1);
+
   // Parallel Photon lookups — interactive autocomplete must stay sub-second when possible.
   const photonBatches = await Promise.all(
-    queries.slice(0, 3).map((query) => photonSearch(query, near, perQuery).catch(() => []))
+    photonQueries.map((query) =>
+      photonSearch(query, near, perQuery, serviceAreaOnly).catch(() => [])
+    )
   );
   const results = photonBatches.flat();
 
   // Single Nominatim fallback only when Photon is sparse (avoids serial multi-second chains).
   if (results.length < Math.max(2, limit / 2)) {
     const nominatimPrimary = await nominatimGate
-      .run(`nominatim:${primaryQuery}`, () => nominatimSearch(primaryQuery, near, perQuery))
+      .run(`nominatim:${primaryQuery}`, () =>
+        nominatimSearch(primaryQuery, near, perQuery, serviceAreaOnly)
+      )
       .catch(() => [] as RankCandidate[]);
     results.push(...nominatimPrimary);
   }
 
   return results;
+}
+
+async function runAutocompleteSearch(
+  opts: AutocompleteOptions & { serviceAreaOnly: boolean }
+): Promise<AutocompleteSuggestion[]> {
+  const q = opts.q.trim();
+  const limit = Math.min(opts.limit ?? 8, 10);
+  const city = opts.city ?? DEFAULT_CITY;
+  const state = opts.state ?? DEFAULT_STATE;
+  const near = opts.near ?? (opts.serviceAreaOnly ? DEFAULT_CENTER : undefined);
+  const parsed = parsePartialAddress(q);
+  const queries = expandSearchQueries(q, city, state, opts.serviceAreaOnly);
+  const rankNear = near ?? DEFAULT_CENTER;
+
+  const [googleResults, osmResults] = await Promise.all([
+    googleAutocomplete(queries, rankNear, state, limit + 2, opts.serviceAreaOnly),
+    osmAutocomplete(queries, near, limit + 4, opts.serviceAreaOnly),
+  ]);
+
+  return mergeAndRank([...googleResults, ...osmResults], parsed, rankNear, limit);
 }
 
 export async function searchAddressAutocomplete(
@@ -327,22 +377,27 @@ export async function searchAddressAutocomplete(
   const limit = Math.min(opts.limit ?? 8, 10);
   const city = opts.city ?? DEFAULT_CITY;
   const state = opts.state ?? DEFAULT_STATE;
-  const near = opts.near ?? DEFAULT_CENTER;
-  const parsed = parsePartialAddress(q);
-  const queries = expandSearchQueries(q, city, state);
+  const serviceAreaOnly = opts.serviceAreaOnly !== false;
 
   if (q.length < 3) return [];
 
-  const key = autocompleteCacheKey({ ...opts, q, city, state });
+  const key = autocompleteCacheKey({ ...opts, q, city, state, serviceAreaOnly });
   const cached = suggestionCache.get(key);
   if (cached) return cached;
 
-  const [googleResults, osmResults] = await Promise.all([
-    googleAutocomplete(queries, near, state, limit + 2),
-    osmAutocomplete(queries, near, limit + 4),
-  ]);
+  let merged = await runAutocompleteSearch({ ...opts, q, limit, city, state, serviceAreaOnly });
 
-  const merged = mergeAndRank([...googleResults, ...osmResults], parsed, near, limit);
+  if (merged.length === 0 && serviceAreaOnly && shouldRetryNationwide(q, city)) {
+    merged = await runAutocompleteSearch({
+      ...opts,
+      q,
+      limit,
+      city,
+      state,
+      serviceAreaOnly: false,
+    });
+  }
+
   suggestionCache.set(key, merged);
   return merged;
 }

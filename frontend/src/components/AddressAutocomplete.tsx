@@ -37,6 +37,8 @@ interface AddressAutocompleteProps {
   near?: { lat: number; lng: number };
   city?: string;
   state?: string;
+  /** When false, search US-wide instead of biasing to the South Bend service area. */
+  serviceAreaOnly?: boolean;
 }
 
 const DEBOUNCE_MS = 100;
@@ -69,7 +71,7 @@ function shouldFetch(q: string): boolean {
 
 export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompleteProps>(
   function AddressAutocomplete(
-    { value, onChange, onSelect, onKeyDown, placeholder, style, near, city, state },
+    { value, onChange, onSelect, onKeyDown, placeholder, style, near, city, state, serviceAreaOnly = true },
     ref
   ) {
     const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([]);
@@ -83,6 +85,7 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
     const abortRef = useRef<AbortController | null>(null);
     const fetchIdRef = useRef(0);
     const latestQueryRef = useRef("");
+    const prevNearRef = useRef(near);
 
     const listboxId = useId();
     const inputId = useId();
@@ -124,6 +127,7 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
           }
           if (city) params.set("city", city);
           if (state) params.set("state", state);
+          if (!serviceAreaOnly) params.set("service_area_only", "false");
 
           const res = await fetch(`/api/geocode/autocomplete?${params.toString()}`, {
             signal: controller.signal,
@@ -152,7 +156,7 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
           }
         }
       },
-      [near, city, state]
+      [near, city, state, serviceAreaOnly]
     );
 
     const handleChange = useCallback(
@@ -249,6 +253,15 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
         el?.scrollIntoView({ block: "nearest" });
       }
     }, [activeIdx]);
+
+    useEffect(() => {
+      const prev = prevNearRef.current;
+      prevNearRef.current = near;
+      if (!near || !prev) return;
+      if (prev.lat === near.lat && prev.lng === near.lng) return;
+      const q = value.trim();
+      if (shouldFetch(q)) void fetchSuggestions(q);
+    }, [near, value, fetchSuggestions]);
 
     useEffect(() => {
       return () => {

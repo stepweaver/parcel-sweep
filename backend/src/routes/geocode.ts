@@ -19,6 +19,7 @@ geocodeRouter.get(
     const nearLng = req.query.near_lng ? parseFloat(String(req.query.near_lng)) : null;
     const city = typeof req.query.city === "string" ? req.query.city.trim() : undefined;
     const state = typeof req.query.state === "string" ? req.query.state.trim() : undefined;
+    const serviceAreaOnly = req.query.service_area_only !== "false";
 
     if (q.length < 3) {
       res.json({ suggestions: [] });
@@ -40,6 +41,7 @@ geocodeRouter.get(
         near,
         city,
         state,
+        serviceAreaOnly,
       });
       res.json({ suggestions });
     } catch (err) {

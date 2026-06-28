@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type QuickRouteResponse } from "../api";
 import { STATIONS, DEFAULT_STATION, SERVICE_AREA } from "../config/operations";
 import { QuickRouteMap } from "../components/QuickRouteMap";
-import { FriendlyInput } from "../components/FriendlyInput";
 import { AddressAutocomplete } from "../components/AddressAutocomplete";
 
 interface StopEntry {
@@ -77,7 +76,7 @@ export function QuickRoutePage() {
   const [stops, setStops] = useState<StopEntry[]>(
     saved.stops?.length ? saved.stops : [newStop(), newStop()]
   );
-  const [startMode, setStartMode] = useState<StartMode>(saved.startMode ?? "station");
+  const [startMode, setStartMode] = useState<StartMode>(saved.startMode ?? "location");
   const [stationId, setStationId] = useState(saved.stationId ?? DEFAULT_STATION.id);
   const [customAddress, setCustomAddress] = useState(saved.customAddress ?? "");
 
@@ -100,6 +99,7 @@ export function QuickRoutePage() {
   const inputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
   const addStopRef = useRef<HTMLButtonElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
+  const autoLocateAttempted = useRef(false);
 
   // Persist to localStorage whenever key state changes
   useEffect(() => {
@@ -177,34 +177,44 @@ export function QuickRoutePage() {
     [stops, addStop, removeStop]
   );
 
-  const handleLocate = useCallback(() => {
+  const handleLocate = useCallback((options?: { silent?: boolean }) => {
     if (!navigator.geolocation) {
-      setLocationError("Geolocation is not supported by this browser.");
+      if (!options?.silent) {
+        setLocationError("Geolocation is not supported by this browser.");
+      }
       return;
     }
     setLocating(true);
-    setLocationError("");
-    setLocatedCoords(null);
+    if (!options?.silent) {
+      setLocationError("");
+      setLocatedCoords(null);
+      setLocatedLabel("");
+    }
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const { latitude, longitude } = pos.coords;
         setLocatedCoords({ lat: latitude, lng: longitude });
         setLocatedLabel(`${latitude.toFixed(5)}, ${longitude.toFixed(5)}`);
         setLocating(false);
+        setLocationError("");
       },
       (err) => {
-        setLocationError(`Could not get location: ${err.message}`);
+        if (!options?.silent) {
+          setLocationError(`Could not get location: ${err.message}`);
+        }
         setLocating(false);
       },
-      { timeout: 10000 }
+      { timeout: 10000, maximumAge: 300000 }
     );
   }, []);
 
+  // Acquire location on load for route start (when selected) and autocomplete bias.
   useEffect(() => {
-    if (startMode === "location" && !locatedCoords && !locating) {
-      handleLocate();
-    }
-  }, [startMode, locatedCoords, locating, handleLocate]);
+    if (autoLocateAttempted.current || locatedCoords || locating) return;
+    if (!navigator.geolocation) return;
+    autoLocateAttempted.current = true;
+    handleLocate({ silent: true });
+  }, [locatedCoords, locating, handleLocate]);
 
   /** Parse pasted text into stop entries and append to list. */
   const handlePasteImport = useCallback(() => {
@@ -231,13 +241,12 @@ export function QuickRoutePage() {
 
   const selectedStation = STATIONS.find((s) => s.id === stationId) ?? DEFAULT_STATION;
 
-  // Always bias autocomplete to South Bend service area
-  const autocompleteBias =
-    startMode === "location" && locatedCoords
-      ? locatedCoords
-      : startMode === "station"
-      ? selectedStation.coords
-      : SERVICE_AREA.center;
+  // Prefer the user's location for autocomplete whenever we have it.
+  const stopAutocompleteBias =
+    locatedCoords ??
+    (startMode === "station" ? selectedStation.coords : SERVICE_AREA.center);
+
+  const customStartBias = locatedCoords ?? undefined;
 
   const resolvedStartAddress = (() => {
     if (startMode === "station") return selectedStation.address;
@@ -319,7 +328,7 @@ export function QuickRoutePage() {
             Start from
           </div>
           <div style={{ display: "flex", gap: ".5rem", flexWrap: "wrap" }}>
-            {(["station", "location", "custom"] as StartMode[]).map((mode) => (
+            {(["location", "station", "custom"] as StartMode[]).map((mode) => (
               <button
                 key={mode}
                 type="button"
@@ -376,7 +385,7 @@ export function QuickRoutePage() {
                 <button
                   type="button"
                   className="btn-secondary"
-                  onClick={handleLocate}
+                  onClick={() => handleLocate()}
                   disabled={locating}
                   style={{ flexShrink: 0 }}
                 >
@@ -392,11 +401,12 @@ export function QuickRoutePage() {
           )}
 
           {startMode === "custom" && (
-            <FriendlyInput
-              type="text"
+            <AddressAutocomplete
               value={customAddress}
-              onChange={(e) => setCustomAddress(e.target.value)}
-              placeholder="e.g. 123 Main St, South Bend, IN 46601"
+              onChange={setCustomAddress}
+              placeholder="Your home address, any city"
+              serviceAreaOnly={false}
+              near={customStartBias}
               style={{ width: "100%", marginTop: ".75rem" }}
             />
           )}
@@ -503,7 +513,7 @@ export function QuickRoutePage() {
                   onSelect={() => handleStopSelect(stop.id)}
                   onKeyDown={(e) => handleStopKeyDown(e, stop.id)}
                   placeholder={`Address ${idx + 1}`}
-                  near={autocompleteBias}
+                  near={stopAutocompleteBias}
                   city={SERVICE_AREA.city}
                   state={SERVICE_AREA.state}
                 />

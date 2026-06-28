@@ -11,6 +11,7 @@ import {
   mergeAndRank,
   parsePartialAddress,
   scoreCandidate,
+  shouldRetryNationwide,
   type RankCandidate,
 } from "./addressAutocompleteRank.js";
 
@@ -69,6 +70,23 @@ describe("expandSearchQueries", () => {
     const queries = expandSearchQueries("302 Fox", "South Bend", "IN");
     assert.ok(queries.some((q) => q.includes("East Fox")));
     assert.ok(queries.some((q) => q.includes("West Fox")));
+  });
+
+  it("does not append South Bend when searching nationwide", () => {
+    const queries = expandSearchQueries("123 Oak St, Chicago, IL", "South Bend", "IN", false);
+    assert.deepEqual(queries, ["123 Oak St, Chicago, IL"]);
+  });
+});
+
+describe("shouldRetryNationwide", () => {
+  it("retries when query names a different city", () => {
+    assert.equal(shouldRetryNationwide("123 Main St, Chicago, IL", "South Bend"), true);
+    assert.equal(shouldRetryNationwide("302 Fox St, South Bend, IN", "South Bend"), false);
+  });
+
+  it("retries for non-local zip codes", () => {
+    assert.equal(shouldRetryNationwide("123 Main St 60601", "South Bend"), true);
+    assert.equal(shouldRetryNationwide("302 Fox 46601", "South Bend"), false);
   });
 });
 
