@@ -12,11 +12,10 @@ const DEFAULT_STATE = "IN";
 const DEFAULT_CENTER = { lat: 41.6764, lng: -86.252 };
 const SERVICE_BBOX = "-86.50,41.48,-86.05,41.82";
 const CACHE_TTL_MS = 2 * 60 * 1000;
-const CACHE_MAX = 250;
+const CACHE_MAX = 300;
 const STREET_SUFFIX =
   /\b(st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|ln|lane|ct|court|way|pl|place|ter|terrace|cir|circle|pkwy|parkway)\b/i;
-const CARDINAL =
-  /\b(east|west|north|south|e|w|n|s|ne|nw|se|sw)\b/i;
+const FULL_CARDINAL = /\b(east|west|north|south)\b/i;
 
 export interface AutocompleteSuggestion {
   placeId: string;
@@ -136,43 +135,53 @@ function queryHasLocality(q: string, city: string, state: string): boolean {
   );
 }
 
-/** Build several search phrasings — handles missing St/East/West suffixes. */
+function hasFullCardinal(streetPart: string): boolean {
+  return FULL_CARDINAL.test(streetPart);
+}
+
+/** Build search phrasings — prioritizes East/West partial patterns common in South Bend. */
 function expandSearchQueries(q: string, city: string, state: string): string[] {
   const parsed = parsePartialAddress(q);
   const locality = `${city} ${state}`;
-  const out = new Set<string>();
+  const ordered: string[] = [];
+  const seen = new Set<string>();
 
   const add = (s: string) => {
     const t = s.replace(/\s+/g, " ").trim();
-    if (t.length >= 3) out.add(t);
+    if (t.length < 3 || seen.has(t)) return;
+    seen.add(t);
+    ordered.push(t);
   };
-
-  add(queryHasLocality(q, city, state) ? q : `${q} ${locality}`);
 
   if (parsed.houseNumber && parsed.streetPart) {
     const { houseNumber, streetPart } = parsed;
     const hasSuffix = STREET_SUFFIX.test(streetPart);
-    const hasCardinal = CARDINAL.test(streetPart);
 
-    if (!hasSuffix) {
+    if (!hasSuffix && !hasFullCardinal(streetPart)) {
+      // Best partial-street patterns — "302 E" → "302 East E …" surfaces East Ewing Ave
+      add(`${houseNumber} East ${streetPart} ${locality}`);
+      add(`${houseNumber} West ${streetPart} ${locality}`);
+      add(`${houseNumber} East ${streetPart} Avenue ${locality}`);
+      add(`${houseNumber} West ${streetPart} Avenue ${locality}`);
+      add(`${houseNumber} ${streetPart} Avenue ${locality}`);
       add(`${houseNumber} ${streetPart} Street ${locality}`);
-      add(`${houseNumber} ${streetPart} St ${locality}`);
-      if (!hasCardinal) {
-        add(`${houseNumber} East ${streetPart} Street ${locality}`);
-        add(`${houseNumber} West ${streetPart} Street ${locality}`);
-        add(`${houseNumber} E ${streetPart} St ${locality}`);
-        add(`${houseNumber} W ${streetPart} St ${locality}`);
-      }
+    } else if (!hasSuffix) {
+      add(`${houseNumber} ${streetPart} Avenue ${locality}`);
+      add(`${houseNumber} ${streetPart} Street ${locality}`);
     }
-  } else if (parsed.streetPart && !STREET_SUFFIX.test(parsed.streetPart)) {
-    add(`${parsed.streetPart} Street ${locality}`);
-    if (!CARDINAL.test(parsed.streetPart)) {
-      add(`East ${parsed.streetPart} Street ${locality}`);
-      add(`West ${parsed.streetPart} Street ${locality}`);
-    }
+  } else if (parsed.streetPart && !STREET_SUFFIX.test(parsed.streetPart) && !hasFullCardinal(parsed.streetPart)) {
+    add(`East ${parsed.streetPart} Avenue ${locality}`);
+    add(`West ${parsed.streetPart} Avenue ${locality}`);
+    add(`${parsed.streetPart} Avenue ${locality}`);
   }
 
-  return Array.from(out).slice(0, 6);
+  add(queryHasLocality(q, city, state) ? q : `${q} ${locality}`);
+
+  return ordered.slice(0, 8);
+}
+
+function streetPortion(displayName: string): string {
+  return (displayName.split(",")[0] ?? displayName).trim();
 }
 
 function normalizeStreetForMatch(text: string): string {
@@ -184,15 +193,39 @@ function normalizeStreetForMatch(text: string): string {
       /\b(street|st|avenue|ave|road|rd|drive|dr|lane|ln|boulevard|blvd|court|ct|way|place|pl|terrace|ter|circle|cir|parkway|pkwy)\b/g,
       " "
     )
+    .replace(/^\d+[a-z]?\s*/, " ")
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-function streetTokens(text: string): string[] {
+function streetNameWords(text: string): string[] {
   return normalizeStreetForMatch(text)
     .split(/\s+/)
-    .filter((t) => t.length >= 2);
+    .filter((t) => t.length >= 1 && !/^\d+$/.test(t));
+}
+
+function streetQueryTokens(streetPart: string): string[] {
+  const cleaned = streetPart.trim().toLowerCase();
+  if (!cleaned) return [];
+  if (STREET_SUFFIX.test(cleaned) || hasFullCardinal(cleaned)) {
+    return streetNameWords(cleaned);
+  }
+  // Treat short partial street input as a single prefix token ("E", "Ei", "Ewing")
+  return [cleaned.replace(/[^a-z0-9]/g, "")].filter((t) => t.length >= 1);
+}
+
+/** Prefix or subsequence match — "Ei" matches "Ewing", "E" matches "Ewing". */
+function fuzzyStreetMatch(queryToken: string, word: string): boolean {
+  if (!queryToken || !word) return false;
+  if (word.startsWith(queryToken)) return true;
+  if (queryToken.length === 1) return word.startsWith(queryToken);
+
+  let qi = 0;
+  for (let wi = 0; wi < word.length && qi < queryToken.length; wi++) {
+    if (word[wi] === queryToken[qi]) qi++;
+  }
+  return qi === queryToken.length;
 }
 
 function normalizeState(state: string | undefined): string {
@@ -239,32 +272,57 @@ function scoreSuggestion(
   parsed: ParsedPartialAddress,
   near: { lat: number; lng: number }
 ): number {
-  const normalized = normalizeStreetForMatch(s.displayName);
+  const streetLine = streetPortion(s.displayName);
+  const words = streetNameWords(streetLine);
   const lower = s.displayName.toLowerCase();
   let score = 0;
 
   if (parsed.houseNumber) {
-    const numRe = new RegExp(`\\b${parsed.houseNumber.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
-    if (numRe.test(s.displayName)) score += 120;
-    else score -= 50;
+    const numRe = new RegExp(
+      `\\b${parsed.houseNumber.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+      "i"
+    );
+    if (numRe.test(streetLine)) score += 120;
+    else score -= 60;
   }
 
-  const tokens = streetTokens(parsed.streetPart);
+  const tokens = streetQueryTokens(parsed.streetPart);
+  let streetMatchCount = 0;
   if (tokens.length === 0) {
-    score += 10;
+    score += 5;
   } else {
     for (const token of tokens) {
-      if (normalized.includes(token)) score += 70;
-      else score -= 35;
+      if (words.some((w) => fuzzyStreetMatch(token, w))) {
+        streetMatchCount++;
+        score += 80;
+      } else {
+        score -= 40;
+      }
+    }
+    if (streetMatchCount === 0 && parsed.houseNumber) {
+      const numRe = new RegExp(
+        `\\b${parsed.houseNumber.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+        "i"
+      );
+      if (numRe.test(streetLine)) score -= 90;
     }
   }
 
-  if (parsed.houseNumber && !/\d/.test(s.displayName.split(",")[0] ?? "")) {
-    score -= 25;
+  if (parsed.houseNumber && !/\d/.test(streetLine)) {
+    score -= 30;
   }
 
-  if (lower.includes("south bend")) score += 15;
-  score -= haversineMeters(near, { lat: s.lat, lng: s.lng }) / 2500;
+  if (lower.includes("south bend")) score += 20;
+  if (/^466\d{2}/.test(s.displayName)) score += 10;
+
+  const qLower = parsed.streetPart.toLowerCase();
+  const lineLower = streetLine.toLowerCase();
+  if (!/\b(west|w)\b/.test(qLower) && /\beast\b/.test(lineLower)) score += 10;
+  if (!/\b(east|e)\b/.test(qLower) && !/\b(west|w)\b/.test(qLower) && /\bwest\b/.test(lineLower)) {
+    score -= 5;
+  }
+
+  score -= haversineMeters(near, { lat: s.lat, lng: s.lng }) / 3000;
 
   return score;
 }
@@ -276,18 +334,37 @@ function mergeAndRank(
   limit: number
 ): AutocompleteSuggestion[] {
   const seen = new Set<string>();
-  return suggestions
+  const ranked = suggestions
     .map((s) => ({ ...s, _score: scoreSuggestion(s, parsed, near) }))
-    .filter((s) => s._score > 0)
     .sort((a, b) => b._score - a._score)
     .filter((s) => {
       const key = s.displayName.toLowerCase();
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
-    })
-    .slice(0, limit)
-    .map(({ placeId, displayName, lat, lng }) => ({ placeId, displayName, lat, lng }));
+    });
+
+  const tokens = streetQueryTokens(parsed.streetPart);
+  const filtered =
+    parsed.houseNumber && tokens.length > 0
+      ? ranked.filter((s) => s._score >= 60)
+      : ranked.filter((s) => s._score > 0);
+
+  let picked = filtered;
+  if (picked.length === 0 && tokens.length > 0) {
+    picked = ranked.filter((s) => {
+      const words = streetNameWords(streetPortion(s.displayName));
+      return tokens.some((t) => words.some((w) => fuzzyStreetMatch(t, w)));
+    });
+  }
+  if (picked.length === 0) picked = ranked;
+
+  return picked.slice(0, limit).map(({ placeId, displayName, lat, lng }) => ({
+    placeId,
+    displayName,
+    lat,
+    lng,
+  }));
 }
 
 async function googleAutocomplete(
@@ -299,7 +376,9 @@ async function googleAutocomplete(
   const apiKey = process.env.GOOGLE_GEOCODING_API_KEY?.trim();
   if (!apiKey) return [];
 
-  for (const input of queries) {
+  const all: AutocompleteSuggestion[] = [];
+
+  for (const input of queries.slice(0, 4)) {
     try {
       const response = await axios.get<GoogleAutocompleteResponse>(
         GOOGLE_PLACES_AUTOCOMPLETE_URL,
@@ -317,18 +396,21 @@ async function googleAutocomplete(
       );
 
       if (response.data.status === "OK" && response.data.predictions?.length) {
-        return response.data.predictions.slice(0, limit).map((p) => ({
-          placeId: p.place_id,
-          displayName: p.description,
-          lat: near.lat,
-          lng: near.lng,
-        }));
+        for (const p of response.data.predictions) {
+          all.push({
+            placeId: p.place_id,
+            displayName: p.description,
+            lat: near.lat,
+            lng: near.lng,
+          });
+        }
       }
     } catch {
-      // try next query variant
+      // try next variant
     }
   }
-  return [];
+
+  return all;
 }
 
 async function photonSearch(
@@ -376,11 +458,17 @@ async function nominatimSearch(
       limit: fetchLimit,
     },
     headers: { "User-Agent": NOMINATIM_USER_AGENT },
-    timeout: 6000,
+    timeout: 12000,
   });
 
   return response.data
     .filter((r) => r.address?.road || r.address?.house_number)
+    .filter((r) => {
+      const city = (r.address?.city ?? r.address?.town ?? "").toLowerCase();
+      const state = r.address?.state ?? "";
+      const zip = r.address?.postcode ?? "";
+      return city.includes("south bend") || state === "Indiana" || /^466\d{2}$/.test(zip);
+    })
     .map((r) => ({
       placeId: String(r.place_id),
       displayName: buildNominatimDisplayName(r),
@@ -389,28 +477,85 @@ async function nominatimSearch(
     }));
 }
 
+async function resolveHouseOnStreets(
+  parsed: ParsedPartialAddress,
+  city: string,
+  state: string,
+  near: { lat: number; lng: number },
+  candidates: AutocompleteSuggestion[]
+): Promise<AutocompleteSuggestion[]> {
+  if (!parsed.houseNumber || parsed.streetPart.length > 8) return [];
+
+  const tokens = streetQueryTokens(parsed.streetPart);
+  if (tokens.length === 0) return [];
+
+  const streets = new Set<string>();
+  for (const candidate of candidates) {
+    const line = streetPortion(candidate.displayName).replace(/^\d+[a-zA-Z]?\s+/, "").trim();
+    const words = streetNameWords(line);
+    if (line && tokens.some((t) => words.some((w) => fuzzyStreetMatch(t, w)))) {
+      streets.add(line);
+      const shortened = line.replace(/^(North|South|East|West|N|S|E|W)\s+/i, "").trim();
+      if (shortened !== line) streets.add(shortened);
+    }
+  }
+
+  const locality = `${city}, ${state}`;
+  const lookups = await Promise.all(
+    [...streets].slice(0, 3).map((street) =>
+      nominatimSearch(`${parsed.houseNumber} ${street}, ${locality}`, near, 2).catch(
+        () => [] as AutocompleteSuggestion[]
+      )
+    )
+  );
+  return lookups.flat();
+}
+
 async function osmAutocomplete(
   queries: string[],
+  parsed: ParsedPartialAddress,
+  city: string,
+  state: string,
   near: { lat: number; lng: number },
   limit: number
 ): Promise<AutocompleteSuggestion[]> {
-  const perQuery = limit + 4;
-  const photonQueries = queries.slice(0, 4);
-  const nominatimQuery =
-    queries.find((q) => STREET_SUFFIX.test(q) && /\d/.test(q)) ?? queries[1] ?? queries[0];
+  const perQuery = limit + 6;
 
-  const [photonBatches, nominatimBatch] = await Promise.all([
+  const streetQuery = queries.find((q) => /\b(Street|St)\b/i.test(q));
+  const avenueQuery = queries.find((q) => /\b(Avenue|Ave)\b/i.test(q));
+  const baseQuery = queries[queries.length - 1];
+  const nominatimQueries = [
+    streetQuery,
+    avenueQuery,
+    queries.find((q) => /\bEast\b/i.test(q)),
+    baseQuery,
+  ].filter((q): q is string => Boolean(q));
+  const uniqueNominatim = [...new Set(nominatimQueries)].slice(0, 3);
+
+  const photonQueries = [
+    streetQuery,
+    avenueQuery,
+    ...queries.filter((q) => q !== streetQuery && q !== avenueQuery),
+  ]
+    .filter((q): q is string => Boolean(q))
+    .slice(0, 6);
+
+  const [photonBatches, nominatimBatches] = await Promise.all([
     Promise.all(
       photonQueries.map((q) =>
         photonSearch(q, near, perQuery).catch(() => [] as AutocompleteSuggestion[])
       )
     ),
-    nominatimSearch(nominatimQuery, near, perQuery).catch(
-      () => [] as AutocompleteSuggestion[]
+    Promise.all(
+      uniqueNominatim.map((q) =>
+        nominatimSearch(q, near, perQuery).catch(() => [] as AutocompleteSuggestion[])
+      )
     ),
   ]);
 
-  return [...photonBatches.flat(), ...nominatimBatch];
+  const initial = [...photonBatches.flat(), ...nominatimBatches.flat()];
+  const resolved = await resolveHouseOnStreets(parsed, city, state, near, initial);
+  return [...initial, ...resolved];
 }
 
 export async function searchAddressAutocomplete(
@@ -431,8 +576,8 @@ export async function searchAddressAutocomplete(
   if (cached) return cached;
 
   const [googleResults, osmResults] = await Promise.all([
-    googleAutocomplete(queries, near, state, limit),
-    osmAutocomplete(queries, near, limit + 6),
+    googleAutocomplete(queries, near, state, limit + 4),
+    osmAutocomplete(queries, parsed, city, state, near, limit + 8),
   ]);
 
   const merged = mergeAndRank([...googleResults, ...osmResults], parsed, near, limit);

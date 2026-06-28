@@ -27,8 +27,16 @@ interface AddressAutocompleteProps {
   state?: string;
 }
 
-const MIN_CHARS = 3;
-const DEBOUNCE_MS = 180;
+const DEBOUNCE_MS = 150;
+
+/** Avoid fetching on bare house numbers like "302" — wait for street input. */
+function shouldFetch(q: string): boolean {
+  const t = q.trim();
+  if (t.length < 3) return false;
+  if (/^\d+[a-zA-Z]?\s+\S/.test(t)) return true;
+  if (t.length >= 4 && !/^\d+$/.test(t)) return true;
+  return false;
+}
 
 export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompleteProps>(
   function AddressAutocomplete(
@@ -50,9 +58,11 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
 
     const fetchSuggestions = useCallback(
       async (q: string) => {
-        if (q.length < MIN_CHARS) {
-          setSuggestions([]);
-          setIsOpen(false);
+        if (!shouldFetch(q)) {
+          if (!/^\d+[a-zA-Z]?\s*$/.test(q.trim())) {
+            setSuggestions([]);
+            setIsOpen(false);
+          }
           return;
         }
 
@@ -102,10 +112,12 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
         const v = e.target.value;
         onChange(v);
         if (debounceRef.current) clearTimeout(debounceRef.current);
-        if (v.trim().length < MIN_CHARS) {
-          abortRef.current?.abort();
-          setSuggestions([]);
-          setIsOpen(false);
+        if (!shouldFetch(v.trim())) {
+          if (!/^\d+[a-zA-Z]?\s*$/.test(v.trim())) {
+            abortRef.current?.abort();
+            setSuggestions([]);
+            setIsOpen(false);
+          }
           setFetching(false);
           return;
         }
@@ -205,7 +217,7 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
             onChange={handleChange}
             onKeyDown={handleKeyDown}
             onFocus={() => {
-              if (value.trim().length >= MIN_CHARS && suggestions.length === 0) {
+              if (shouldFetch(value.trim()) && suggestions.length === 0) {
                 void fetchSuggestions(value.trim());
               } else if (suggestions.length > 0) {
                 setIsOpen(true);
