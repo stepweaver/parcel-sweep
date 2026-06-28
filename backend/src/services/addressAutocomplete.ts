@@ -9,12 +9,14 @@ const NOMINATIM_USER_AGENT =
 
 const DEFAULT_CITY = "South Bend";
 const DEFAULT_STATE = "IN";
-const DEFAULT_STATE_NAME = "Indiana";
 const DEFAULT_CENTER = { lat: 41.6764, lng: -86.252 };
-/** South Bend metro bounding box: minLon, minLat, maxLon, maxLat */
 const SERVICE_BBOX = "-86.50,41.48,-86.05,41.82";
 const CACHE_TTL_MS = 2 * 60 * 1000;
 const CACHE_MAX = 250;
+const STREET_SUFFIX =
+  /\b(st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|ln|lane|ct|court|way|pl|place|ter|terrace|cir|circle|pkwy|parkway)\b/i;
+const CARDINAL =
+  /\b(east|west|north|south|e|w|n|s|ne|nw|se|sw)\b/i;
 
 export interface AutocompleteSuggestion {
   placeId: string;
@@ -29,6 +31,11 @@ export interface AutocompleteOptions {
   near?: { lat: number; lng: number };
   city?: string;
   state?: string;
+}
+
+interface ParsedPartialAddress {
+  houseNumber?: string;
+  streetPart: string;
 }
 
 interface PhotonFeature {
@@ -69,7 +76,6 @@ interface NominatimResult {
 interface GoogleAutocompleteResponse {
   status: string;
   predictions?: Array<{ place_id: string; description: string }>;
-  error_message?: string;
 }
 
 const cache = new Map<string, { expires: number; suggestions: AutocompleteSuggestion[] }>();
@@ -112,6 +118,15 @@ function haversineMeters(
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
+function parsePartialAddress(q: string): ParsedPartialAddress {
+  const trimmed = q.trim();
+  const match = trimmed.match(/^(\d+[a-zA-Z]?)\s+(.+)$/);
+  if (match) {
+    return { houseNumber: match[1], streetPart: match[2].trim() };
+  }
+  return { streetPart: trimmed };
+}
+
 function queryHasLocality(q: string, city: string, state: string): boolean {
   const lower = q.toLowerCase();
   return (
@@ -121,9 +136,63 @@ function queryHasLocality(q: string, city: string, state: string): boolean {
   );
 }
 
-function augmentQuery(q: string, city: string, state: string): string {
-  if (queryHasLocality(q, city, state)) return q;
-  return `${q} ${city} ${state}`;
+/** Build several search phrasings — handles missing St/East/West suffixes. */
+function expandSearchQueries(q: string, city: string, state: string): string[] {
+  const parsed = parsePartialAddress(q);
+  const locality = `${city} ${state}`;
+  const out = new Set<string>();
+
+  const add = (s: string) => {
+    const t = s.replace(/\s+/g, " ").trim();
+    if (t.length >= 3) out.add(t);
+  };
+
+  add(queryHasLocality(q, city, state) ? q : `${q} ${locality}`);
+
+  if (parsed.houseNumber && parsed.streetPart) {
+    const { houseNumber, streetPart } = parsed;
+    const hasSuffix = STREET_SUFFIX.test(streetPart);
+    const hasCardinal = CARDINAL.test(streetPart);
+
+    if (!hasSuffix) {
+      add(`${houseNumber} ${streetPart} Street ${locality}`);
+      add(`${houseNumber} ${streetPart} St ${locality}`);
+      if (!hasCardinal) {
+        add(`${houseNumber} East ${streetPart} Street ${locality}`);
+        add(`${houseNumber} West ${streetPart} Street ${locality}`);
+        add(`${houseNumber} E ${streetPart} St ${locality}`);
+        add(`${houseNumber} W ${streetPart} St ${locality}`);
+      }
+    }
+  } else if (parsed.streetPart && !STREET_SUFFIX.test(parsed.streetPart)) {
+    add(`${parsed.streetPart} Street ${locality}`);
+    if (!CARDINAL.test(parsed.streetPart)) {
+      add(`East ${parsed.streetPart} Street ${locality}`);
+      add(`West ${parsed.streetPart} Street ${locality}`);
+    }
+  }
+
+  return Array.from(out).slice(0, 6);
+}
+
+function normalizeStreetForMatch(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\b(east|west|north|south)\b/g, " ")
+    .replace(/\b(e|w|n|s)\b(?=\s|$)/g, " ")
+    .replace(
+      /\b(street|st|avenue|ave|road|rd|drive|dr|lane|ln|boulevard|blvd|court|ct|way|place|pl|terrace|ter|circle|cir|parkway|pkwy)\b/g,
+      " "
+    )
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function streetTokens(text: string): string[] {
+  return normalizeStreetForMatch(text)
+    .split(/\s+/)
+    .filter((t) => t.length >= 2);
 }
 
 function normalizeState(state: string | undefined): string {
@@ -156,15 +225,61 @@ function buildPhotonDisplayName(props: PhotonFeature["properties"]): string {
   return props.name ?? streetLine;
 }
 
-function rankSuggestions(
+function buildNominatimDisplayName(r: NominatimResult): string {
+  const a = r.address;
+  if (!a) return r.display_name.split(",").slice(0, 4).join(",").trim();
+  const street = [a.house_number, a.road].filter(Boolean).join(" ");
+  const state = a.state === "Indiana" ? "IN" : (a.state ?? "");
+  const locality = [a.city ?? a.town, state, a.postcode].filter(Boolean).join(", ");
+  return street ? `${street}, ${locality}` : r.display_name.split(",").slice(0, 3).join(",");
+}
+
+function scoreSuggestion(
+  s: AutocompleteSuggestion,
+  parsed: ParsedPartialAddress,
+  near: { lat: number; lng: number }
+): number {
+  const normalized = normalizeStreetForMatch(s.displayName);
+  const lower = s.displayName.toLowerCase();
+  let score = 0;
+
+  if (parsed.houseNumber) {
+    const numRe = new RegExp(`\\b${parsed.houseNumber.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+    if (numRe.test(s.displayName)) score += 120;
+    else score -= 50;
+  }
+
+  const tokens = streetTokens(parsed.streetPart);
+  if (tokens.length === 0) {
+    score += 10;
+  } else {
+    for (const token of tokens) {
+      if (normalized.includes(token)) score += 70;
+      else score -= 35;
+    }
+  }
+
+  if (parsed.houseNumber && !/\d/.test(s.displayName.split(",")[0] ?? "")) {
+    score -= 25;
+  }
+
+  if (lower.includes("south bend")) score += 15;
+  score -= haversineMeters(near, { lat: s.lat, lng: s.lng }) / 2500;
+
+  return score;
+}
+
+function mergeAndRank(
   suggestions: AutocompleteSuggestion[],
-  center: { lat: number; lng: number },
+  parsed: ParsedPartialAddress,
+  near: { lat: number; lng: number },
   limit: number
 ): AutocompleteSuggestion[] {
   const seen = new Set<string>();
   return suggestions
-    .map((s) => ({ ...s, _dist: haversineMeters(center, { lat: s.lat, lng: s.lng }) }))
-    .sort((a, b) => a._dist - b._dist)
+    .map((s) => ({ ...s, _score: scoreSuggestion(s, parsed, near) }))
+    .filter((s) => s._score > 0)
+    .sort((a, b) => b._score - a._score)
     .filter((s) => {
       const key = s.displayName.toLowerCase();
       if (seen.has(key)) return false;
@@ -176,7 +291,7 @@ function rankSuggestions(
 }
 
 async function googleAutocomplete(
-  q: string,
+  queries: string[],
   near: { lat: number; lng: number },
   stateAbbr: string,
   limit: number
@@ -184,141 +299,118 @@ async function googleAutocomplete(
   const apiKey = process.env.GOOGLE_GEOCODING_API_KEY?.trim();
   if (!apiKey) return [];
 
-  try {
-    const response = await axios.get<GoogleAutocompleteResponse>(
-      GOOGLE_PLACES_AUTOCOMPLETE_URL,
-      {
-        params: {
-          input: q,
-          key: apiKey,
-          location: `${near.lat},${near.lng}`,
-          radius: 50000,
-          components: `country:us|administrative_area:${stateAbbr}`,
-          types: "address",
-        },
-        timeout: 3500,
+  for (const input of queries) {
+    try {
+      const response = await axios.get<GoogleAutocompleteResponse>(
+        GOOGLE_PLACES_AUTOCOMPLETE_URL,
+        {
+          params: {
+            input,
+            key: apiKey,
+            location: `${near.lat},${near.lng}`,
+            radius: 50000,
+            components: `country:us|administrative_area:${stateAbbr}`,
+            types: "address",
+          },
+          timeout: 3500,
+        }
+      );
+
+      if (response.data.status === "OK" && response.data.predictions?.length) {
+        return response.data.predictions.slice(0, limit).map((p) => ({
+          placeId: p.place_id,
+          displayName: p.description,
+          lat: near.lat,
+          lng: near.lng,
+        }));
       }
-    );
-
-    if (response.data.status !== "OK" && response.data.status !== "ZERO_RESULTS") {
-      return [];
+    } catch {
+      // try next query variant
     }
+  }
+  return [];
+}
 
-    return (response.data.predictions ?? []).slice(0, limit).map((p) => ({
-      placeId: p.place_id,
-      displayName: p.description,
+async function photonSearch(
+  query: string,
+  near: { lat: number; lng: number },
+  fetchLimit: number
+): Promise<AutocompleteSuggestion[]> {
+  const response = await axios.get<PhotonResponse>(PHOTON_URL, {
+    params: {
+      q: query,
       lat: near.lat,
-      lng: near.lng,
+      lon: near.lng,
+      bbox: SERVICE_BBOX,
+      limit: fetchLimit,
+    },
+    timeout: 3500,
+  });
+
+  return response.data.features
+    .filter((f) => isInServiceArea(f.properties))
+    .map((f) => ({
+      placeId: `${f.properties.osm_type}-${f.properties.osm_id}`,
+      displayName: buildPhotonDisplayName(f.properties),
+      lat: f.geometry.coordinates[1],
+      lng: f.geometry.coordinates[0],
     }));
-  } catch {
-    return [];
-  }
 }
 
-async function photonAutocomplete(
-  q: string,
+async function nominatimSearch(
+  query: string,
   near: { lat: number; lng: number },
-  city: string,
-  state: string,
-  limit: number
+  fetchLimit: number
 ): Promise<AutocompleteSuggestion[]> {
-  const augmented = augmentQuery(q, city, state);
+  const delta = 0.22;
+  const response = await axios.get<NominatimResult[]>(NOMINATIM_SEARCH_URL, {
+    params: {
+      q: query,
+      format: "json",
+      addressdetails: 1,
+      countrycodes: "us",
+      lat: near.lat,
+      lon: near.lng,
+      viewbox: `${near.lng - delta},${near.lat + delta},${near.lng + delta},${near.lat - delta}`,
+      bounded: 0,
+      limit: fetchLimit,
+    },
+    headers: { "User-Agent": NOMINATIM_USER_AGENT },
+    timeout: 6000,
+  });
 
-  try {
-    const response = await axios.get<PhotonResponse>(PHOTON_URL, {
-      params: {
-        q: augmented,
-        lat: near.lat,
-        lon: near.lng,
-        bbox: SERVICE_BBOX,
-        limit: limit + 6,
-      },
-      timeout: 3500,
-    });
-
-    const suggestions = response.data.features
-      .filter((f) => isInServiceArea(f.properties))
-      .map((f) => ({
-        placeId: `${f.properties.osm_type}-${f.properties.osm_id}`,
-        displayName: buildPhotonDisplayName(f.properties),
-        lat: f.geometry.coordinates[1],
-        lng: f.geometry.coordinates[0],
-        _hasNumber: Boolean(f.properties.housenumber),
-        _isHouse: f.properties.type === "house",
-      }))
-      // Prefer exact house matches, then numbered addresses, then streets
-      .sort((a, b) => {
-        if (a._isHouse !== b._isHouse) return a._isHouse ? -1 : 1;
-        if (a._hasNumber !== b._hasNumber) return a._hasNumber ? -1 : 1;
-        return 0;
-      });
-
-    return rankSuggestions(
-      suggestions.map(({ placeId, displayName, lat, lng }) => ({
-        placeId,
-        displayName,
-        lat,
-        lng,
-      })),
-      near,
-      limit
-    );
-  } catch (err) {
-    console.warn(
-      "[autocomplete] Photon request failed:",
-      err instanceof Error ? err.message : err
-    );
-    return [];
-  }
+  return response.data
+    .filter((r) => r.address?.road || r.address?.house_number)
+    .map((r) => ({
+      placeId: String(r.place_id),
+      displayName: buildNominatimDisplayName(r),
+      lat: parseFloat(r.lat),
+      lng: parseFloat(r.lon),
+    }));
 }
 
-async function nominatimFallback(
-  q: string,
+async function osmAutocomplete(
+  queries: string[],
   near: { lat: number; lng: number },
-  city: string,
-  state: string,
   limit: number
 ): Promise<AutocompleteSuggestion[]> {
-  const augmented = augmentQuery(q, city, state);
-  const delta = 0.18;
+  const perQuery = limit + 4;
+  const photonQueries = queries.slice(0, 4);
+  const nominatimQuery =
+    queries.find((q) => STREET_SUFFIX.test(q) && /\d/.test(q)) ?? queries[1] ?? queries[0];
 
-  try {
-    const response = await axios.get<NominatimResult[]>(NOMINATIM_SEARCH_URL, {
-      params: {
-        q: augmented,
-        format: "json",
-        addressdetails: 1,
-        countrycodes: "us",
-        lat: near.lat,
-        lon: near.lng,
-        viewbox: `${near.lng - delta},${near.lat + delta},${near.lng + delta},${near.lat - delta}`,
-        bounded: 1,
-        limit: limit + 2,
-      },
-      headers: { "User-Agent": NOMINATIM_USER_AGENT },
-      timeout: 5000,
-    });
+  const [photonBatches, nominatimBatch] = await Promise.all([
+    Promise.all(
+      photonQueries.map((q) =>
+        photonSearch(q, near, perQuery).catch(() => [] as AutocompleteSuggestion[])
+      )
+    ),
+    nominatimSearch(nominatimQuery, near, perQuery).catch(
+      () => [] as AutocompleteSuggestion[]
+    ),
+  ]);
 
-    return rankSuggestions(
-      response.data
-        .filter((r) => r.address?.road || r.address?.house_number)
-        .map((r) => {
-          const a = r.address!;
-          const street = [a.house_number, a.road].filter(Boolean).join(" ");
-          const locality = [a.city ?? a.town, a.state, a.postcode].filter(Boolean).join(", ");
-          return {
-            placeId: String(r.place_id),
-            displayName: street ? `${street}, ${locality}` : r.display_name.split(",").slice(0, 3).join(","),
-            lat: parseFloat(r.lat),
-            lng: parseFloat(r.lon),
-          };
-        }),
-      near,
-      limit
-    );
-  } catch {
-    return [];
-  }
+  return [...photonBatches.flat(), ...nominatimBatch];
 }
 
 export async function searchAddressAutocomplete(
@@ -329,6 +421,8 @@ export async function searchAddressAutocomplete(
   const city = opts.city ?? DEFAULT_CITY;
   const state = opts.state ?? DEFAULT_STATE;
   const near = opts.near ?? DEFAULT_CENTER;
+  const parsed = parsePartialAddress(q);
+  const queries = expandSearchQueries(q, city, state);
 
   if (q.length < 3) return [];
 
@@ -336,19 +430,13 @@ export async function searchAddressAutocomplete(
   const cached = getCached(key);
   if (cached) return cached;
 
-  // 1. Google Places — best partial-address matching when API key + Places API enabled
-  let suggestions = await googleAutocomplete(q, near, state, limit);
+  const [googleResults, osmResults] = await Promise.all([
+    googleAutocomplete(queries, near, state, limit),
+    osmAutocomplete(queries, near, limit + 6),
+  ]);
 
-  // 2. Photon — fast OSM autocomplete, good for partial street names like "1804 Twy"
-  if (suggestions.length === 0) {
-    suggestions = await photonAutocomplete(q, near, city, state, limit);
-  }
+  const merged = mergeAndRank([...googleResults, ...osmResults], parsed, near, limit);
 
-  // 3. Nominatim — slow fallback for addresses Photon misses
-  if (suggestions.length === 0) {
-    suggestions = await nominatimFallback(q, near, city, state, limit);
-  }
-
-  setCache(key, suggestions);
-  return suggestions;
+  setCache(key, merged);
+  return merged;
 }
