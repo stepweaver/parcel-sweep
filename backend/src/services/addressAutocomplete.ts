@@ -7,12 +7,8 @@ import {
   expandSearchQueries,
   mergeAndRank,
   parsePartialAddress,
-  streetCoreWords,
-  streetPortion,
-  streetQueryTokens,
-  fuzzyStreetMatch,
 } from "./addressAutocompleteRank.js";
-import { nominatimGate, photonGate } from "./providerRateLimit.js";
+import { nominatimGate } from "./providerRateLimit.js";
 
 export type {
   AddressConfidence,
@@ -175,7 +171,7 @@ async function googleAutocomplete(
   const predictions: Array<{ place_id: string; description: string }> = [];
   const seen = new Set<string>();
 
-  for (const input of queries.slice(0, 2)) {
+  for (const input of queries.slice(0, 1)) {
     try {
       const response = await axios.get<GoogleAutocompleteResponse>(
         GOOGLE_PLACES_AUTOCOMPLETE_URL,
@@ -274,7 +270,7 @@ async function nominatimSearch(
       limit: fetchLimit,
     },
     headers: { "User-Agent": NOMINATIM_USER_AGENT },
-    timeout: 12000,
+    timeout: 4000,
   });
 
   return response.data
@@ -298,106 +294,30 @@ async function nominatimSearch(
     }));
 }
 
-async function resolveHouseOnStreets(
-  parsed: ReturnType<typeof parsePartialAddress>,
-  city: string,
-  state: string,
-  near: { lat: number; lng: number },
-  candidates: RankCandidate[]
-): Promise<RankCandidate[]> {
-  if (!parsed.houseNumber || parsed.streetPart.length > 8) return [];
-
-  const tokens = streetQueryTokens(parsed.streetPart);
-  if (tokens.length === 0) return [];
-
-  const streets = new Set<string>();
-  for (const candidate of candidates) {
-    const line = streetPortion(candidate.displayName).replace(/^\d+[a-zA-Z]?\s+/, "").trim();
-    const words = streetCoreWords(line);
-    if (line && tokens.some((t) => words.some((w) => fuzzyStreetMatch(t, w)))) {
-      streets.add(line);
-    }
-  }
-
-  const locality = `${city}, ${state}`;
-  const verified: RankCandidate[] = [];
-  const failedStreets = new Set<string>();
-
-  for (const street of [...streets].slice(0, 2)) {
-    const query = `${parsed.houseNumber} ${street}, ${locality}`;
-    const hits = await nominatimGate
-      .run(`nominatim:verify:${query}`, () => nominatimSearch(query, near, 2))
-      .catch(() => [] as RankCandidate[]);
-
-    if (hits.length > 0) {
-      verified.push(
-        ...hits.map((h) => ({
-          ...h,
-          houseNumberVerified: true,
-          confidence: "verified_parcel" as const,
-        }))
-      );
-    } else {
-      failedStreets.add(street.toLowerCase());
-    }
-  }
-
-  for (const candidate of candidates) {
-    const line = streetPortion(candidate.displayName);
-    if (!parsed.houseNumber || candidate.houseNumberVerified !== undefined) continue;
-    const streetOnly = line.replace(/^\d+[a-zA-Z]?\s+/, "").trim().toLowerCase();
-    if (failedStreets.has(streetOnly)) {
-      candidate.houseNumberVerified = false;
-    }
-  }
-
-  return verified;
-}
-
 async function osmAutocomplete(
   queries: string[],
-  parsed: ReturnType<typeof parsePartialAddress>,
-  city: string,
-  state: string,
   near: { lat: number; lng: number },
   limit: number
 ): Promise<RankCandidate[]> {
   const perQuery = limit + 6;
-  const results: RankCandidate[] = [];
   const primaryQuery = queries[0];
   if (!primaryQuery) return [];
 
-  const photonPrimary = await photonGate
-    .run(`photon:${primaryQuery}`, () => photonSearch(primaryQuery, near, perQuery))
-    .catch(() => [] as RankCandidate[]);
-  results.push(...photonPrimary);
+  // Parallel Photon lookups — interactive autocomplete must stay sub-second when possible.
+  const photonBatches = await Promise.all(
+    queries.slice(0, 3).map((query) => photonSearch(query, near, perQuery).catch(() => []))
+  );
+  const results = photonBatches.flat();
 
-  if (results.length < limit) {
-    for (const query of queries.slice(1, 3)) {
-      if (results.length >= limit + 4) break;
-      const batch = await photonGate
-        .run(`photon:${query}`, () => photonSearch(query, near, perQuery))
-        .catch(() => [] as RankCandidate[]);
-      results.push(...batch);
-    }
-  }
-
-  if (results.length < Math.max(3, limit / 2)) {
+  // Single Nominatim fallback only when Photon is sparse (avoids serial multi-second chains).
+  if (results.length < Math.max(2, limit / 2)) {
     const nominatimPrimary = await nominatimGate
       .run(`nominatim:${primaryQuery}`, () => nominatimSearch(primaryQuery, near, perQuery))
       .catch(() => [] as RankCandidate[]);
     results.push(...nominatimPrimary);
-
-    if (results.length < limit && queries[1]) {
-      const nominatimSecondary = await nominatimGate
-        .run(`nominatim:${queries[1]}`, () => nominatimSearch(queries[1], near, perQuery))
-        .catch(() => [] as RankCandidate[]);
-      results.push(...nominatimSecondary);
-    }
   }
 
-  const resolved = await resolveHouseOnStreets(parsed, city, state, near, results);
-  return [...results, ...resolved];
+  return results;
 }
 
 export async function searchAddressAutocomplete(
@@ -419,7 +339,7 @@ export async function searchAddressAutocomplete(
 
   const [googleResults, osmResults] = await Promise.all([
     googleAutocomplete(queries, near, state, limit + 2),
-    osmAutocomplete(queries, parsed, city, state, near, limit + 4),
+    osmAutocomplete(queries, near, limit + 4),
   ]);
 
   const merged = mergeAndRank([...googleResults, ...osmResults], parsed, near, limit);

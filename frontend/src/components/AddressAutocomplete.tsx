@@ -39,7 +39,8 @@ interface AddressAutocompleteProps {
   state?: string;
 }
 
-const DEBOUNCE_MS = 150;
+const DEBOUNCE_MS = 100;
+const FETCH_TIMEOUT_MS = 5000;
 
 const CONFIDENCE_LABEL: Record<AddressConfidence, string> = {
   verified_rooftop: "Exact",
@@ -80,12 +81,20 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
     const dropdownRef = useRef<HTMLUListElement>(null);
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const abortRef = useRef<AbortController | null>(null);
+    const fetchIdRef = useRef(0);
     const latestQueryRef = useRef("");
 
     const listboxId = useId();
     const inputId = useId();
 
     useImperativeHandle(ref, () => inputRef.current!);
+
+    const cancelInFlight = useCallback(() => {
+      abortRef.current?.abort();
+      abortRef.current = null;
+      fetchIdRef.current += 1;
+      setFetching(false);
+    }, []);
 
     const fetchSuggestions = useCallback(
       async (q: string) => {
@@ -100,8 +109,12 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
         abortRef.current?.abort();
         const controller = new AbortController();
         abortRef.current = controller;
+        const fetchId = ++fetchIdRef.current;
         latestQueryRef.current = q;
         setFetching(true);
+        setIsOpen(true);
+
+        const timeoutId = window.setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
         try {
           const params = new URLSearchParams({ q });
@@ -119,18 +132,22 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const data = (await res.json()) as { suggestions: AddressSuggestion[] };
 
-          if (latestQueryRef.current !== q || controller.signal.aborted) return;
+          if (fetchId !== fetchIdRef.current || latestQueryRef.current !== q) return;
+
           setSuggestions(data.suggestions);
           setIsOpen(data.suggestions.length > 0);
           setActiveIdx(data.suggestions.length > 0 ? 0 : -1);
         } catch (err) {
           if (err instanceof DOMException && err.name === "AbortError") return;
-          if (latestQueryRef.current === q) {
-            setSuggestions([]);
-            setIsOpen(false);
+          if (fetchId === fetchIdRef.current && latestQueryRef.current === q) {
+            setSuggestions((prev) => {
+              if (prev.length === 0) setIsOpen(false);
+              return prev;
+            });
           }
         } finally {
-          if (latestQueryRef.current === q && !controller.signal.aborted) {
+          window.clearTimeout(timeoutId);
+          if (fetchId === fetchIdRef.current) {
             setFetching(false);
           }
         }
@@ -143,32 +160,38 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
         const v = e.target.value;
         onChange(v);
         if (debounceRef.current) clearTimeout(debounceRef.current);
+
         if (!shouldFetch(v.trim())) {
           if (!/^\d+[a-zA-Z]?\s*$/.test(v.trim())) {
-            abortRef.current?.abort();
+            cancelInFlight();
             setSuggestions([]);
             setIsOpen(false);
+          } else {
+            cancelInFlight();
           }
-          setFetching(false);
           return;
         }
+
         debounceRef.current = setTimeout(() => void fetchSuggestions(v.trim()), DEBOUNCE_MS);
       },
-      [onChange, fetchSuggestions]
+      [onChange, fetchSuggestions, cancelInFlight]
     );
 
     const selectSuggestion = useCallback(
       (s: AddressSuggestion) => {
+        cancelInFlight();
         onChange(s.displayName);
         onSelect?.(s);
         setSuggestions([]);
         setIsOpen(false);
         setActiveIdx(-1);
-        requestAnimationFrame(() => {
-          inputRef.current?.focus();
-        });
+        if (!onSelect) {
+          requestAnimationFrame(() => {
+            inputRef.current?.focus();
+          });
+        }
       },
-      [onChange, onSelect]
+      [onChange, onSelect, cancelInFlight]
     );
 
     const handleKeyDown = useCallback(
@@ -194,6 +217,7 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
             return;
           }
           if (e.key === "Escape") {
+            cancelInFlight();
             setIsOpen(false);
             setActiveIdx(-1);
             return;
@@ -201,7 +225,7 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
         }
         onKeyDown?.(e);
       },
-      [isOpen, suggestions, activeIdx, selectSuggestion, onKeyDown]
+      [isOpen, suggestions, activeIdx, selectSuggestion, onKeyDown, cancelInFlight]
     );
 
     useEffect(() => {
@@ -235,6 +259,7 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
 
     const activeOptionId =
       activeIdx >= 0 ? `${listboxId}-option-${activeIdx}` : undefined;
+    const showDropdown = isOpen && (suggestions.length > 0 || fetching);
 
     return (
       <div style={{ position: "relative", flex: 1 }}>
@@ -245,7 +270,7 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
             className="friendly-input"
             type="text"
             role="combobox"
-            aria-expanded={isOpen}
+            aria-expanded={showDropdown}
             aria-controls={listboxId}
             aria-autocomplete="list"
             aria-activedescendant={activeOptionId}
@@ -257,8 +282,12 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
             onChange={handleChange}
             onKeyDown={handleKeyDown}
             onFocus={() => {
-              if (shouldFetch(value.trim()) && suggestions.length === 0) {
-                void fetchSuggestions(value.trim());
+              if (shouldFetch(value.trim())) {
+                if (suggestions.length > 0) {
+                  setIsOpen(true);
+                } else {
+                  void fetchSuggestions(value.trim());
+                }
               } else if (suggestions.length > 0) {
                 setIsOpen(true);
               }
@@ -281,7 +310,7 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
           )}
         </div>
 
-        {isOpen && suggestions.length > 0 && (
+        {showDropdown && (
           <ul
             ref={dropdownRef}
             id={listboxId}
@@ -327,6 +356,12 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
                 </li>
               );
             })}
+            {fetching && suggestions.length === 0 && (
+              <li className="address-autocomplete-status" aria-hidden="true">
+                <span className="spinner" style={{ width: 12, height: 12, borderWidth: 2 }} />
+                Searching…
+              </li>
+            )}
           </ul>
         )}
       </div>

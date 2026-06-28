@@ -137,6 +137,25 @@ export function QuickRoutePage() {
     setStops((prev) => prev.map((s) => (s.id === id ? { ...s, address } : s)));
   }, []);
 
+  const handleStopSelect = useCallback((stopId: string) => {
+    setStops((prev) => {
+      const idx = prev.findIndex((s) => s.id === stopId);
+      if (idx < 0) return prev;
+      if (idx === prev.length - 1) {
+        const nextStop = newStop();
+        requestAnimationFrame(() => {
+          inputRefs.current.get(nextStop.id)?.focus();
+        });
+        return [...prev, nextStop];
+      }
+      const nextId = prev[idx + 1].id;
+      requestAnimationFrame(() => {
+        inputRefs.current.get(nextId)?.focus();
+      });
+      return prev;
+    });
+  }, []);
+
   const handleStopKeyDown = useCallback(
     (e: React.KeyboardEvent, id: string) => {
       if (e.key === "Enter") {
@@ -481,6 +500,7 @@ export function QuickRoutePage() {
                   ref={(el) => registerRef(stop.id, el)}
                   value={stop.address}
                   onChange={(v) => updateStop(stop.id, v)}
+                  onSelect={() => handleStopSelect(stop.id)}
                   onKeyDown={(e) => handleStopKeyDown(e, stop.id)}
                   placeholder={`Address ${idx + 1}`}
                   near={autocompleteBias}

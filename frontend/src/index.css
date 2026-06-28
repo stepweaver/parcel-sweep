@@ -1346,6 +1346,18 @@ select:focus {
   background: var(--hover-bg);
 }
 
+.address-autocomplete-status {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  border-bottom: none;
+  cursor: default;
+  list-style: none;
+}
+
 .address-suggestion-row {
   display: flex;
   align-items: flex-start;
