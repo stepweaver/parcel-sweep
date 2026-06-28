@@ -1028,23 +1028,26 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   .app-nav-toggle { display: flex; }
   .app-nav-panel {
     flex: 1 1 100%;
-    display: grid;
-    grid-template-rows: 0fr;
-    transition: grid-template-rows 0.25s ease;
+    width: 100%;
+    max-height: 0;
+    overflow: hidden;
+    pointer-events: none;
+    transition: max-height 0.25s ease;
   }
   .app-nav-panel.is-open {
-    grid-template-rows: 1fr;
+    max-height: 20rem;
+    pointer-events: auto;
   }
   .app-nav-panel__inner {
     overflow: hidden;
+    min-height: 0;
+    flex: none;
+    width: 100%;
     flex-direction: column;
     align-items: stretch;
     gap: 0;
-    padding-bottom: 0;
-    transition: padding 0.25s ease;
-  }
-  .app-nav-panel.is-open .app-nav-panel__inner {
     padding-bottom: 0.75rem;
+    background: var(--nav-bg);
   }
   .app-nav-links {
     flex-direction: column;
