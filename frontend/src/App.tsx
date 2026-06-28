@@ -1,6 +1,6 @@
-import { BrowserRouter, Routes, Route, NavLink, Link } from "react-router-dom";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AppFooter } from "./components/AppFooter";
-import { ThemeSelector } from "./components/ThemeSelector";
+import { AppNav } from "./components/AppNav";
 import { ThemeProvider } from "./context/ThemeProvider";
 import { Dashboard } from "./pages/Dashboard";
 import { Admin } from "./pages/Admin";
@@ -10,52 +10,6 @@ import { LoadingDock } from "./pages/LoadingDock";
 import { RouteView } from "./pages/RouteView";
 import { DriverView } from "./pages/DriverView";
 import { QuickRoutePage } from "./pages/QuickRoutePage";
-
-function Nav() {
-  return (
-    <nav className="app-nav">
-      <div className="app-nav-inner">
-        <Link to="/" className="app-nav-brand" aria-label="Parcel Sweep home">
-          <span aria-hidden="true">📦</span> Parcel Sweep
-        </Link>
-        <div className="app-nav-links">
-          <NavLink
-            to="/"
-            end
-            className={({ isActive }) => (isActive ? "app-nav-link active" : "app-nav-link")}
-          >
-            Dashboard
-          </NavLink>
-          <NavLink
-            to="/sunday"
-            className={({ isActive }) => (isActive ? "app-nav-link active" : "app-nav-link")}
-          >
-            Sunday Hub
-          </NavLink>
-          <NavLink
-            to="/manifests/new"
-            className={({ isActive }) => (isActive ? "app-nav-link active" : "app-nav-link")}
-          >
-            Manifests
-          </NavLink>
-          <NavLink
-            to="/admin"
-            className={({ isActive }) => (isActive ? "app-nav-link active" : "app-nav-link")}
-          >
-            Routes &amp; Drivers
-          </NavLink>
-          <NavLink
-            to="/quick-route"
-            className={({ isActive }) => (isActive ? "app-nav-link active" : "app-nav-link")}
-          >
-            Quick Route
-          </NavLink>
-        </div>
-        <ThemeSelector variant="compact" className="app-nav-theme" />
-      </div>
-    </nav>
-  );
-}
 
 export default function App() {
   return (
@@ -70,7 +24,7 @@ export default function App() {
           path="*"
           element={
             <>
-              <Nav />
+              <AppNav />
               <Routes>
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/sunday" element={<SundayDashboard />} />

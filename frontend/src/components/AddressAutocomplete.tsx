@@ -6,10 +6,9 @@ import {
   useRef,
   useState,
 } from "react";
-import { api } from "../api";
 
 export interface AddressSuggestion {
-  placeId: number;
+  placeId: string;
   displayName: string;
   lat: number;
   lng: number;
@@ -24,14 +23,16 @@ interface AddressAutocompleteProps {
   style?: React.CSSProperties;
   /** Bias suggestions toward this point (e.g. the selected station coords). */
   near?: { lat: number; lng: number };
+  city?: string;
+  state?: string;
 }
 
-const MIN_CHARS = 4;
-const DEBOUNCE_MS = 350;
+const MIN_CHARS = 3;
+const DEBOUNCE_MS = 180;
 
 export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompleteProps>(
   function AddressAutocomplete(
-    { value, onChange, onSelect, onKeyDown, placeholder, style, near },
+    { value, onChange, onSelect, onKeyDown, placeholder, style, near, city, state },
     ref
   ) {
     const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([]);
@@ -42,6 +43,7 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
     const inputRef = useRef<HTMLInputElement>(null);
     const dropdownRef = useRef<HTMLUListElement>(null);
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const abortRef = useRef<AbortController | null>(null);
     const latestQueryRef = useRef("");
 
     useImperativeHandle(ref, () => inputRef.current!);
@@ -53,23 +55,46 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
           setIsOpen(false);
           return;
         }
+
+        abortRef.current?.abort();
+        const controller = new AbortController();
+        abortRef.current = controller;
         latestQueryRef.current = q;
         setFetching(true);
+
         try {
-          const { suggestions: results } = await api.geocode.autocomplete(q, near);
-          // Ignore stale responses
-          if (latestQueryRef.current !== q) return;
-          setSuggestions(results);
-          setIsOpen(results.length > 0);
-          setActiveIdx(-1);
-        } catch {
-          setSuggestions([]);
-          setIsOpen(false);
+          const params = new URLSearchParams({ q });
+          if (near) {
+            params.set("near_lat", String(near.lat));
+            params.set("near_lng", String(near.lng));
+          }
+          if (city) params.set("city", city);
+          if (state) params.set("state", state);
+
+          const res = await fetch(`/api/geocode/autocomplete?${params.toString()}`, {
+            signal: controller.signal,
+            headers: { "Content-Type": "application/json" },
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = (await res.json()) as { suggestions: AddressSuggestion[] };
+
+          if (latestQueryRef.current !== q || controller.signal.aborted) return;
+          setSuggestions(data.suggestions);
+          setIsOpen(data.suggestions.length > 0);
+          setActiveIdx(data.suggestions.length > 0 ? 0 : -1);
+        } catch (err) {
+          if (err instanceof DOMException && err.name === "AbortError") return;
+          if (latestQueryRef.current === q) {
+            setSuggestions([]);
+            setIsOpen(false);
+          }
         } finally {
-          if (latestQueryRef.current === q) setFetching(false);
+          if (latestQueryRef.current === q && !controller.signal.aborted) {
+            setFetching(false);
+          }
         }
       },
-      [near]
+      [near, city, state]
     );
 
     const handleChange = useCallback(
@@ -77,13 +102,14 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
         const v = e.target.value;
         onChange(v);
         if (debounceRef.current) clearTimeout(debounceRef.current);
-        if (v.length < MIN_CHARS) {
+        if (v.trim().length < MIN_CHARS) {
+          abortRef.current?.abort();
           setSuggestions([]);
           setIsOpen(false);
           setFetching(false);
           return;
         }
-        debounceRef.current = setTimeout(() => void fetchSuggestions(v), DEBOUNCE_MS);
+        debounceRef.current = setTimeout(() => void fetchSuggestions(v.trim()), DEBOUNCE_MS);
       },
       [onChange, fetchSuggestions]
     );
@@ -95,7 +121,6 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
         setSuggestions([]);
         setIsOpen(false);
         setActiveIdx(-1);
-        // Move focus back to input and advance to next stop
         requestAnimationFrame(() => {
           inputRef.current?.focus();
         });
@@ -113,13 +138,16 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
           }
           if (e.key === "ArrowUp") {
             e.preventDefault();
-            setActiveIdx((i) => Math.max(i - 1, -1));
+            setActiveIdx((i) => Math.max(i - 1, 0));
             return;
           }
           if (e.key === "Enter" && activeIdx >= 0) {
             e.preventDefault();
             selectSuggestion(suggestions[activeIdx]);
-            // Don't bubble Enter to the parent (it would add a new stop)
+            return;
+          }
+          if (e.key === "Tab" && activeIdx >= 0) {
+            selectSuggestion(suggestions[activeIdx]);
             return;
           }
           if (e.key === "Escape") {
@@ -133,7 +161,6 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
       [isOpen, suggestions, activeIdx, selectSuggestion, onKeyDown]
     );
 
-    // Close dropdown when clicking outside
     useEffect(() => {
       const handler = (e: MouseEvent) => {
         if (
@@ -149,7 +176,6 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
       return () => document.removeEventListener("mousedown", handler);
     }, []);
 
-    // Scroll active item into view
     useEffect(() => {
       if (activeIdx >= 0 && dropdownRef.current) {
         const el = dropdownRef.current.children[activeIdx] as HTMLElement | undefined;
@@ -157,10 +183,10 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
       }
     }, [activeIdx]);
 
-    // Cleanup debounce on unmount
     useEffect(() => {
       return () => {
         if (debounceRef.current) clearTimeout(debounceRef.current);
+        abortRef.current?.abort();
       };
     }, []);
 
@@ -179,7 +205,11 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
             onChange={handleChange}
             onKeyDown={handleKeyDown}
             onFocus={() => {
-              if (suggestions.length > 0) setIsOpen(true);
+              if (value.trim().length >= MIN_CHARS && suggestions.length === 0) {
+                void fetchSuggestions(value.trim());
+              } else if (suggestions.length > 0) {
+                setIsOpen(true);
+              }
             }}
             placeholder={placeholder}
             style={{ width: "100%", paddingRight: fetching ? "2rem" : undefined, ...style }}
@@ -216,23 +246,22 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
               borderRadius: "var(--radius)",
               boxShadow: "var(--shadow-lg)",
               zIndex: 300,
-              maxHeight: 260,
+              maxHeight: 280,
               overflowY: "auto",
             }}
           >
             {suggestions.map((s, i) => {
-              // Split displayName into street line and locality line
               const commaIdx = s.displayName.indexOf(",");
               const street = commaIdx > -1 ? s.displayName.slice(0, commaIdx) : s.displayName;
               const locality = commaIdx > -1 ? s.displayName.slice(commaIdx + 1).trim() : "";
 
               return (
                 <li
-                  key={s.placeId}
+                  key={`${s.placeId}-${i}`}
                   role="option"
                   aria-selected={i === activeIdx}
                   onMouseDown={(e) => {
-                    e.preventDefault(); // prevent input blur before click fires
+                    e.preventDefault();
                     selectSuggestion(s);
                   }}
                   onMouseEnter={() => setActiveIdx(i)}
@@ -242,7 +271,6 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
                     background: i === activeIdx ? "var(--hover-bg)" : "transparent",
                     borderBottom:
                       i < suggestions.length - 1 ? "1px solid var(--row-border)" : "none",
-                    transition: "background .1s",
                   }}
                 >
                   <div

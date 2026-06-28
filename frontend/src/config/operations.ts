@@ -28,6 +28,13 @@ export const STATIONS: StationPreset[] = [
 
 export const DEFAULT_STATION = STATIONS[0];
 
+/** Default service area for autocomplete biasing (South Bend operations). */
+export const SERVICE_AREA = {
+  city: "South Bend",
+  state: "IN",
+  center: { lat: 41.6764, lng: -86.252 },
+} as const;
+
 export const DEFAULT_DRIVER_NAMES = ["Driver 1", "Driver 2", "Driver 3"];
 
 export const SUNDAY_DEFAULTS = {

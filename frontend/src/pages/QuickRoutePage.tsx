@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type QuickRouteResponse } from "../api";
-import { STATIONS, DEFAULT_STATION } from "../config/operations";
+import { STATIONS, DEFAULT_STATION, SERVICE_AREA } from "../config/operations";
 import { QuickRouteMap } from "../components/QuickRouteMap";
 import { FriendlyInput } from "../components/FriendlyInput";
 import { AddressAutocomplete } from "../components/AddressAutocomplete";
@@ -212,13 +212,13 @@ export function QuickRoutePage() {
 
   const selectedStation = STATIONS.find((s) => s.id === stationId) ?? DEFAULT_STATION;
 
-  // Bias autocomplete toward the selected station (or located position if in that mode)
+  // Always bias autocomplete to South Bend service area
   const autocompleteBias =
     startMode === "location" && locatedCoords
       ? locatedCoords
       : startMode === "station"
       ? selectedStation.coords
-      : undefined;
+      : SERVICE_AREA.center;
 
   const resolvedStartAddress = (() => {
     if (startMode === "station") return selectedStation.address;
@@ -484,6 +484,8 @@ export function QuickRoutePage() {
                   onKeyDown={(e) => handleStopKeyDown(e, stop.id)}
                   placeholder={`Address ${idx + 1}`}
                   near={autocompleteBias}
+                  city={SERVICE_AREA.city}
+                  state={SERVICE_AREA.state}
                 />
                 <button
                   type="button"

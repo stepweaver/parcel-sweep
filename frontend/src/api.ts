@@ -479,15 +479,24 @@ export const api = {
   },
 
   geocode: {
-    autocomplete: (q: string, near?: { lat: number; lng: number }) => {
-      const params = new URLSearchParams({ q });
-      if (near) {
-        params.set("near_lat", String(near.lat));
-        params.set("near_lng", String(near.lng));
+    autocomplete: (
+      q: string,
+      options?: {
+        near?: { lat: number; lng: number };
+        city?: string;
+        state?: string;
       }
-      return apiFetch<{ suggestions: Array<{ placeId: number; displayName: string; lat: number; lng: number }> }>(
-        `/api/geocode/autocomplete?${params.toString()}`
-      );
+    ) => {
+      const params = new URLSearchParams({ q });
+      if (options?.near) {
+        params.set("near_lat", String(options.near.lat));
+        params.set("near_lng", String(options.near.lng));
+      }
+      if (options?.city) params.set("city", options.city);
+      if (options?.state) params.set("state", options.state);
+      return apiFetch<{
+        suggestions: Array<{ placeId: string; displayName: string; lat: number; lng: number }>;
+      }>(`/api/geocode/autocomplete?${params.toString()}`);
     },
   },
 };
