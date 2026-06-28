@@ -2,16 +2,28 @@ import {
   forwardRef,
   useCallback,
   useEffect,
+  useId,
   useImperativeHandle,
   useRef,
   useState,
 } from "react";
+
+export type AddressConfidence =
+  | "verified_rooftop"
+  | "verified_parcel"
+  | "interpolated"
+  | "street_matched_number_unverified"
+  | "street_only"
+  | "ambiguous";
 
 export interface AddressSuggestion {
   placeId: string;
   displayName: string;
   lat: number;
   lng: number;
+  confidence: AddressConfidence;
+  rankReason: string;
+  distanceMeters?: number;
 }
 
 interface AddressAutocompleteProps {
@@ -28,6 +40,22 @@ interface AddressAutocompleteProps {
 }
 
 const DEBOUNCE_MS = 150;
+
+const CONFIDENCE_LABEL: Record<AddressConfidence, string> = {
+  verified_rooftop: "Exact",
+  verified_parcel: "Verified",
+  interpolated: "Approximate",
+  street_matched_number_unverified: "Confirm",
+  street_only: "Street only",
+  ambiguous: "Confirm",
+};
+
+function formatDistance(meters: number | undefined): string | null {
+  if (meters === undefined) return null;
+  const miles = meters / 1609.344;
+  if (miles < 0.1) return "< 0.1 mi";
+  return `${miles.toFixed(1)} mi`;
+}
 
 /** Avoid fetching on bare house numbers like "302" — wait for street input. */
 function shouldFetch(q: string): boolean {
@@ -53,6 +81,9 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const abortRef = useRef<AbortController | null>(null);
     const latestQueryRef = useRef("");
+
+    const listboxId = useId();
+    const inputId = useId();
 
     useImperativeHandle(ref, () => inputRef.current!);
 
@@ -202,13 +233,22 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
       };
     }, []);
 
+    const activeOptionId =
+      activeIdx >= 0 ? `${listboxId}-option-${activeIdx}` : undefined;
+
     return (
       <div style={{ position: "relative", flex: 1 }}>
         <div style={{ position: "relative" }}>
           <input
             ref={inputRef}
+            id={inputId}
             className="friendly-input"
             type="text"
+            role="combobox"
+            aria-expanded={isOpen}
+            aria-controls={listboxId}
+            aria-autocomplete="list"
+            aria-activedescendant={activeOptionId}
             autoComplete="off"
             autoCorrect="off"
             autoCapitalize="words"
@@ -244,17 +284,23 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
         {isOpen && suggestions.length > 0 && (
           <ul
             ref={dropdownRef}
+            id={listboxId}
             role="listbox"
+            aria-label="Address suggestions"
             className="address-autocomplete-dropdown"
           >
             {suggestions.map((s, i) => {
               const commaIdx = s.displayName.indexOf(",");
               const street = commaIdx > -1 ? s.displayName.slice(0, commaIdx) : s.displayName;
               const locality = commaIdx > -1 ? s.displayName.slice(commaIdx + 1).trim() : "";
+              const distanceLabel = formatDistance(s.distanceMeters);
+              const confidence = s.confidence ?? "ambiguous";
+              const badgeClass = `address-confidence-badge address-confidence-${confidence}`;
 
               return (
                 <li
                   key={`${s.placeId}-${i}`}
+                  id={`${listboxId}-option-${i}`}
                   role="option"
                   aria-selected={i === activeIdx}
                   onMouseDown={(e) => {
@@ -263,31 +309,20 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
                   }}
                   onMouseEnter={() => setActiveIdx(i)}
                 >
-                  <div
-                    style={{
-                      fontSize: ".875rem",
-                      fontWeight: 600,
-                      color: "var(--text)",
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {street}
-                  </div>
-                  {locality && (
-                    <div
-                      style={{
-                        fontSize: ".78rem",
-                        color: "var(--text-muted)",
-                        marginTop: ".1rem",
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {locality}
+                  <div className="address-suggestion-row">
+                    <div className="address-suggestion-main">
+                      <div className="address-suggestion-street">{street}</div>
+                      {locality && <div className="address-suggestion-locality">{locality}</div>}
                     </div>
+                    <div className="address-suggestion-meta">
+                      <span className={badgeClass}>{CONFIDENCE_LABEL[confidence]}</span>
+                      {distanceLabel && (
+                        <span className="address-distance-chip">{distanceLabel}</span>
+                      )}
+                    </div>
+                  </div>
+                  {s.rankReason && (
+                    <div className="address-suggestion-reason">{s.rankReason}</div>
                   )}
                 </li>
               );

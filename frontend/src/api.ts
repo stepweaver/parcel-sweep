@@ -495,7 +495,21 @@ export const api = {
       if (options?.city) params.set("city", options.city);
       if (options?.state) params.set("state", options.state);
       return apiFetch<{
-        suggestions: Array<{ placeId: string; displayName: string; lat: number; lng: number }>;
+        suggestions: Array<{
+          placeId: string;
+          displayName: string;
+          lat: number;
+          lng: number;
+          confidence:
+            | "verified_rooftop"
+            | "verified_parcel"
+            | "interpolated"
+            | "street_matched_number_unverified"
+            | "street_only"
+            | "ambiguous";
+          rankReason: string;
+          distanceMeters?: number;
+        }>;
       }>(`/api/geocode/autocomplete?${params.toString()}`);
     },
   },
