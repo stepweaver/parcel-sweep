@@ -66,9 +66,6 @@ function buildWazeUrl(result: QuickRouteResponse): string {
 
 /** Build plain-text stop list for clipboard copy. */
 function buildTextList(result: QuickRouteResponse): string {
-  const lines = result.route.flatMap((step, i) =>
-    step.stops.map((s) => `${i === 0 ? step.sequence : ""}  ${s.address}`.trimStart())
-  );
   return [`Start: ${result.start.address}`, ...result.route.map((step) =>
     `${step.sequence}. ${step.stops.map((s) => s.address).join(" + ")}`
   )].join("\n");
