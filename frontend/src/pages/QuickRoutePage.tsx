@@ -3,6 +3,7 @@ import { api, type QuickRouteResponse } from "../api";
 import { STATIONS, DEFAULT_STATION } from "../config/operations";
 import { QuickRouteMap } from "../components/QuickRouteMap";
 import { FriendlyInput } from "../components/FriendlyInput";
+import { AddressAutocomplete } from "../components/AddressAutocomplete";
 
 interface StopEntry {
   id: string;
@@ -10,6 +11,32 @@ interface StopEntry {
 }
 
 type StartMode = "station" | "location" | "custom";
+
+const STORAGE_KEY = "parcel-sweep:quick-route";
+
+interface SavedState {
+  stops: StopEntry[];
+  startMode: StartMode;
+  stationId: string;
+  customAddress: string;
+}
+
+function loadSaved(): Partial<SavedState> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as Partial<SavedState>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveState(state: SavedState) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // ignore quota errors
+  }
+}
 
 function formatDuration(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -23,25 +50,64 @@ function newStop(address = ""): StopEntry {
   return { id: crypto.randomUUID(), address };
 }
 
-export function QuickRoutePage() {
-  const [stops, setStops] = useState<StopEntry[]>([newStop(), newStop()]);
+/** Build a Google Maps multi-stop URL from the optimized result. */
+function buildGoogleMapsUrl(result: QuickRouteResponse): string {
+  const addresses = result.route.flatMap((step) => step.stops.map((s) => s.address));
+  const parts = [result.start.address, ...addresses];
+  const encoded = parts.map((a) => encodeURIComponent(a));
+  return `https://www.google.com/maps/dir/${encoded.join("/")}`;
+}
 
-  // Start point
-  const [startMode, setStartMode] = useState<StartMode>("station");
-  const [stationId, setStationId] = useState(DEFAULT_STATION.id);
-  const [customAddress, setCustomAddress] = useState("");
+/** Build a Waze URL for the first stop (Waze doesn't support multi-stop via URL). */
+function buildWazeUrl(result: QuickRouteResponse): string {
+  const first = result.route[0]?.stops[0]?.address ?? "";
+  return `https://waze.com/ul?q=${encodeURIComponent(first)}&navigate=yes`;
+}
+
+/** Build plain-text stop list for clipboard copy. */
+function buildTextList(result: QuickRouteResponse): string {
+  const lines = result.route.flatMap((step, i) =>
+    step.stops.map((s) => `${i === 0 ? step.sequence : ""}  ${s.address}`.trimStart())
+  );
+  return [`Start: ${result.start.address}`, ...result.route.map((step) =>
+    `${step.sequence}. ${step.stops.map((s) => s.address).join(" + ")}`
+  )].join("\n");
+}
+
+export function QuickRoutePage() {
+  const saved = loadSaved();
+
+  const [stops, setStops] = useState<StopEntry[]>(
+    saved.stops?.length ? saved.stops : [newStop(), newStop()]
+  );
+  const [startMode, setStartMode] = useState<StartMode>(saved.startMode ?? "station");
+  const [stationId, setStationId] = useState(saved.stationId ?? DEFAULT_STATION.id);
+  const [customAddress, setCustomAddress] = useState(saved.customAddress ?? "");
+
+  // Geolocation
   const [locating, setLocating] = useState(false);
   const [locatedCoords, setLocatedCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [locatedLabel, setLocatedLabel] = useState("");
   const [locationError, setLocationError] = useState("");
 
+  // Bulk paste panel
+  const [showPaste, setShowPaste] = useState(false);
+  const [pasteText, setPasteText] = useState("");
+
   // Submission
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<QuickRouteResponse | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const inputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
   const addStopRef = useRef<HTMLButtonElement>(null);
+  const resultRef = useRef<HTMLDivElement>(null);
+
+  // Persist to localStorage whenever key state changes
+  useEffect(() => {
+    saveState({ stops, startMode, stationId, customAddress });
+  }, [stops, startMode, stationId, customAddress]);
 
   const registerRef = useCallback((id: string, el: HTMLInputElement | null) => {
     if (el) inputRefs.current.set(id, el);
@@ -51,7 +117,6 @@ export function QuickRoutePage() {
   const addStop = useCallback(() => {
     const s = newStop();
     setStops((prev) => [...prev, s]);
-    // Focus the new input after render
     requestAnimationFrame(() => {
       inputRefs.current.get(s.id)?.focus();
     });
@@ -62,7 +127,6 @@ export function QuickRoutePage() {
       if (prev.length <= 1) return prev;
       const idx = prev.findIndex((s) => s.id === id);
       const next = prev.filter((s) => s.id !== id);
-      // Focus previous or next stop, or the add button
       requestAnimationFrame(() => {
         const target = next[Math.min(idx, next.length - 1)];
         if (target) inputRefs.current.get(target.id)?.focus();
@@ -120,14 +184,44 @@ export function QuickRoutePage() {
     );
   }, []);
 
-  // Auto-locate when mode switches to location
   useEffect(() => {
     if (startMode === "location" && !locatedCoords && !locating) {
       handleLocate();
     }
   }, [startMode, locatedCoords, locating, handleLocate]);
 
+  /** Parse pasted text into stop entries and append to list. */
+  const handlePasteImport = useCallback(() => {
+    const lines = pasteText
+      .split(/[\n,]+/)
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    if (lines.length === 0) return;
+    const newStops = lines.map((addr) => newStop(addr));
+    setStops((prev) => {
+      // Replace blank-only stops first, then append the rest
+      const filled = prev.filter((s) => s.address.trim().length > 0);
+      return [...filled, ...newStops];
+    });
+    setPasteText("");
+    setShowPaste(false);
+  }, [pasteText]);
+
+  const handleClearAll = useCallback(() => {
+    setStops([newStop(), newStop()]);
+    setResult(null);
+    setError("");
+  }, []);
+
   const selectedStation = STATIONS.find((s) => s.id === stationId) ?? DEFAULT_STATION;
+
+  // Bias autocomplete toward the selected station (or located position if in that mode)
+  const autocompleteBias =
+    startMode === "location" && locatedCoords
+      ? locatedCoords
+      : startMode === "station"
+      ? selectedStation.coords
+      : undefined;
 
   const resolvedStartAddress = (() => {
     if (startMode === "station") return selectedStation.address;
@@ -155,6 +249,10 @@ export function QuickRoutePage() {
         stops: filledStops.map((s) => ({ address: s.address.trim() })),
       });
       setResult(res);
+      // Scroll to results
+      requestAnimationFrame(() => {
+        resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Route optimization failed.");
     } finally {
@@ -162,22 +260,49 @@ export function QuickRoutePage() {
     }
   };
 
+  const handleCopyList = async () => {
+    if (!result) return;
+    try {
+      await navigator.clipboard.writeText(buildTextList(result));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // fallback: do nothing
+    }
+  };
+
   return (
     <main className="page-container">
       <div style={{ maxWidth: 680, margin: "0 auto", padding: "2rem 1rem" }}>
-        <h1 style={{ fontSize: "1.5rem", fontWeight: 700, marginBottom: ".25rem" }}>
-          Quick Route Planner
-        </h1>
-        <p className="text-muted" style={{ fontSize: ".9rem", marginBottom: "2rem" }}>
-          Add addresses, pick a start point, and generate an optimized route instantly.
-        </p>
+
+        {/* ── Header ─────────────────────────────────────────── */}
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "1.5rem", gap: "1rem" }}>
+          <div>
+            <h1 style={{ fontSize: "1.5rem", fontWeight: 700, marginBottom: ".2rem" }}>
+              Quick Route
+            </h1>
+            <p className="text-muted" style={{ fontSize: ".875rem" }}>
+              Enter addresses, pick a start, and get an optimized route.
+            </p>
+          </div>
+          {(filledStops.length > 0 || result) && (
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={handleClearAll}
+              style={{ flexShrink: 0, marginTop: ".2rem" }}
+            >
+              Clear all
+            </button>
+          )}
+        </div>
 
         {/* ── Start point ─────────────────────────────────── */}
         <div className="card" style={{ marginBottom: "1.25rem" }}>
-          <div style={{ fontWeight: 700, fontSize: ".85rem", letterSpacing: ".04em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: ".75rem" }}>
+          <div style={{ fontWeight: 700, fontSize: ".8rem", letterSpacing: ".06em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: ".75rem" }}>
             Start from
           </div>
-          <div style={{ display: "flex", gap: ".5rem", flexWrap: "wrap", marginBottom: startMode !== "station" ? ".75rem" : 0 }}>
+          <div style={{ display: "flex", gap: ".5rem", flexWrap: "wrap" }}>
             {(["station", "location", "custom"] as StartMode[]).map((mode) => (
               <button
                 key={mode}
@@ -218,35 +343,36 @@ export function QuickRoutePage() {
           )}
 
           {startMode === "location" && (
-            <div style={{ display: "flex", gap: ".75rem", alignItems: "center", marginTop: ".25rem", flexWrap: "wrap" }}>
-              {locatedCoords ? (
-                <div style={{ display: "flex", alignItems: "center", gap: ".5rem", flex: 1 }}>
-                  <span style={{ fontSize: "1rem" }}>📍</span>
-                  <span style={{ fontSize: ".875rem", color: "var(--text-secondary)" }}>
-                    {locatedLabel}
+            <>
+              <div style={{ display: "flex", gap: ".75rem", alignItems: "center", marginTop: ".75rem", flexWrap: "wrap" }}>
+                {locatedCoords ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: ".4rem", flex: 1 }}>
+                    <span style={{ color: "#16a34a", fontSize: ".95rem" }}>✓</span>
+                    <span style={{ fontSize: ".875rem", color: "var(--text-secondary)" }}>
+                      {locatedLabel}
+                    </span>
+                  </div>
+                ) : (
+                  <span className="text-muted" style={{ fontSize: ".875rem", flex: 1 }}>
+                    {locating ? "Locating…" : "Location not yet acquired"}
                   </span>
+                )}
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={handleLocate}
+                  disabled={locating}
+                  style={{ flexShrink: 0 }}
+                >
+                  {locating ? <><span className="spinner" /> Locating…</> : locatedCoords ? "Re-locate" : "Locate me"}
+                </button>
+              </div>
+              {locationError && (
+                <div style={{ color: "#dc2626", fontSize: ".85rem", marginTop: ".5rem" }}>
+                  {locationError}
                 </div>
-              ) : (
-                <span className="text-muted" style={{ fontSize: ".875rem", flex: 1 }}>
-                  {locating ? "Locating…" : "Location not yet acquired"}
-                </span>
               )}
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={handleLocate}
-                disabled={locating}
-                style={{ flexShrink: 0 }}
-              >
-                {locating ? <><span className="spinner" /> Locating…</> : locatedCoords ? "Re-locate" : "Locate me"}
-              </button>
-            </div>
-          )}
-
-          {startMode === "location" && locationError && (
-            <div style={{ color: "#dc2626", fontSize: ".85rem", marginTop: ".5rem" }}>
-              {locationError}
-            </div>
+            </>
           )}
 
           {startMode === "custom" && (
@@ -262,10 +388,73 @@ export function QuickRoutePage() {
 
         {/* ── Address list ─────────────────────────────────── */}
         <div className="card" style={{ marginBottom: "1.25rem" }}>
-          <div style={{ fontWeight: 700, fontSize: ".85rem", letterSpacing: ".04em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: ".75rem" }}>
-            Stops
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: ".75rem" }}>
+            <div style={{ fontWeight: 700, fontSize: ".8rem", letterSpacing: ".06em", textTransform: "uppercase", color: "var(--text-muted)" }}>
+              Stops {filledStops.length > 0 && <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>({filledStops.length})</span>}
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowPaste((v) => !v)}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "var(--usps-blue)",
+                fontWeight: 600,
+                fontSize: ".82rem",
+                cursor: "pointer",
+                padding: ".1rem .3rem",
+              }}
+            >
+              {showPaste ? "Cancel paste" : "Paste list"}
+            </button>
           </div>
 
+          {/* Bulk paste panel */}
+          {showPaste && (
+            <div
+              style={{
+                marginBottom: "1rem",
+                padding: ".85rem",
+                background: "var(--hover-bg)",
+                borderRadius: "var(--radius)",
+                border: "1px solid var(--border)",
+              }}
+            >
+              <div style={{ fontSize: ".82rem", color: "var(--text-muted)", marginBottom: ".5rem" }}>
+                Paste addresses — one per line, or comma-separated. They'll be added to your stop list.
+              </div>
+              <textarea
+                value={pasteText}
+                onChange={(e) => setPasteText(e.target.value)}
+                placeholder={"123 Main St, South Bend\n456 Oak Ave, South Bend\n789 Elm St, South Bend"}
+                autoFocus
+                style={{
+                  width: "100%",
+                  minHeight: 100,
+                  fontFamily: "inherit",
+                  fontSize: ".875rem",
+                  padding: ".5rem .65rem",
+                  border: "1.5px solid var(--border)",
+                  borderRadius: "var(--radius)",
+                  background: "var(--input-bg)",
+                  color: "var(--text)",
+                  resize: "vertical",
+                  outline: "none",
+                }}
+              />
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={handlePasteImport}
+                disabled={pasteText.trim().length === 0}
+                style={{ marginTop: ".5rem" }}
+              >
+                Add to list
+              </button>
+            </div>
+          )}
+
+          {/* Individual stop inputs */}
           <div style={{ display: "flex", flexDirection: "column", gap: ".5rem" }}>
             {stops.map((stop, idx) => (
               <div
@@ -277,8 +466,8 @@ export function QuickRoutePage() {
                     width: 26,
                     height: 26,
                     borderRadius: "50%",
-                    background: "var(--usps-blue)",
-                    color: "#fff",
+                    background: stop.address.trim() ? "var(--usps-blue)" : "var(--border)",
+                    color: stop.address.trim() ? "#fff" : "var(--text-muted)",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -286,19 +475,18 @@ export function QuickRoutePage() {
                     fontWeight: 800,
                     flexShrink: 0,
                     userSelect: "none",
+                    transition: "background .15s, color .15s",
                   }}
                 >
                   {idx + 1}
                 </div>
-                <FriendlyInput
+                <AddressAutocomplete
                   ref={(el) => registerRef(stop.id, el)}
-                  type="text"
                   value={stop.address}
-                  onChange={(e) => updateStop(stop.id, e.target.value)}
+                  onChange={(v) => updateStop(stop.id, v)}
                   onKeyDown={(e) => handleStopKeyDown(e, stop.id)}
                   placeholder={`Address ${idx + 1}`}
-                  style={{ flex: 1 }}
-                  autoComplete="off"
+                  near={autocompleteBias}
                 />
                 <button
                   type="button"
@@ -319,7 +507,6 @@ export function QuickRoutePage() {
                     fontSize: 16,
                     lineHeight: 1,
                     flexShrink: 0,
-                    transition: "border-color .15s, color .15s",
                   }}
                 >
                   ×
@@ -347,7 +534,6 @@ export function QuickRoutePage() {
               cursor: "pointer",
               width: "100%",
               justifyContent: "center",
-              transition: "border-color .15s, background .15s",
             }}
           >
             + Add stop
@@ -361,7 +547,7 @@ export function QuickRoutePage() {
 
         <button
           className="btn-primary"
-          style={{ width: "100%", fontSize: "1rem", padding: ".7rem" }}
+          style={{ width: "100%", fontSize: "1rem", padding: ".75rem" }}
           disabled={!canSubmit}
           onClick={() => void handleSubmit()}
         >
@@ -374,13 +560,14 @@ export function QuickRoutePage() {
 
         {loading && (
           <p className="text-muted" style={{ fontSize: ".82rem", marginTop: ".5rem", textAlign: "center" }}>
-            Geocoding addresses and running optimizer — this may take a few seconds.
+            Geocoding {filledStops.length} addresses and running optimizer — may take a few seconds.
           </p>
         )}
 
         {/* ── Results ──────────────────────────────────────── */}
         {result && (
-          <div style={{ marginTop: "2rem" }}>
+          <div style={{ marginTop: "2rem" }} ref={resultRef}>
+
             {/* Summary bar */}
             <div
               style={{
@@ -398,22 +585,84 @@ export function QuickRoutePage() {
                 { label: "Drive time", value: formatDuration(result.summary.estimatedDriveSeconds) },
                 { label: "Distance", value: `${result.summary.estimatedDriveMiles} mi` },
               ].map(({ label, value }) => (
-                <div
-                  key={label}
-                  style={{
-                    background: "var(--surface)",
-                    padding: ".75rem 1rem",
-                    textAlign: "center",
-                  }}
-                >
-                  <div style={{ fontSize: "1.25rem", fontWeight: 800, color: "var(--usps-blue)" }}>
-                    {value}
-                  </div>
-                  <div style={{ fontSize: ".78rem", color: "var(--text-muted)", marginTop: ".1rem" }}>
-                    {label}
-                  </div>
+                <div key={label} style={{ background: "var(--surface)", padding: ".75rem 1rem", textAlign: "center" }}>
+                  <div style={{ fontSize: "1.3rem", fontWeight: 800, color: "var(--usps-blue)" }}>{value}</div>
+                  <div style={{ fontSize: ".78rem", color: "var(--text-muted)", marginTop: ".1rem" }}>{label}</div>
                 </div>
               ))}
+            </div>
+
+            {/* Navigate buttons */}
+            <div
+              style={{
+                display: "flex",
+                gap: ".6rem",
+                flexWrap: "wrap",
+                marginBottom: "1.25rem",
+              }}
+            >
+              <a
+                href={buildGoogleMapsUrl(result)}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  flex: "1 1 160px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: ".4rem",
+                  background: "#1a73e8",
+                  color: "#fff",
+                  fontWeight: 700,
+                  fontSize: ".9rem",
+                  padding: ".65rem 1rem",
+                  borderRadius: "var(--radius)",
+                  textDecoration: "none",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Open in Google Maps
+              </a>
+              <a
+                href={buildWazeUrl(result)}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  flex: "1 1 120px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: ".4rem",
+                  background: "#33ccff",
+                  color: "#1a1a2e",
+                  fontWeight: 700,
+                  fontSize: ".9rem",
+                  padding: ".65rem 1rem",
+                  borderRadius: "var(--radius)",
+                  textDecoration: "none",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Open in Waze
+              </a>
+              <button
+                type="button"
+                onClick={() => void handleCopyList()}
+                style={{
+                  flex: "1 1 120px",
+                  background: "var(--surface)",
+                  border: "1.5px solid var(--border)",
+                  color: copied ? "#16a34a" : "var(--text)",
+                  fontWeight: 600,
+                  fontSize: ".9rem",
+                  padding: ".65rem 1rem",
+                  borderRadius: "var(--radius)",
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {copied ? "✓ Copied!" : "Copy stop list"}
+              </button>
             </div>
 
             {/* Map */}
@@ -421,13 +670,13 @@ export function QuickRoutePage() {
               <QuickRouteMap result={result} height={340} />
             </div>
 
-            {/* Stop list */}
-            <div className="card">
-              <div style={{ fontWeight: 700, fontSize: ".85rem", letterSpacing: ".04em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: "1rem" }}>
+            {/* Ordered stop list */}
+            <div className="card" style={{ marginBottom: "1.25rem" }}>
+              <div style={{ fontWeight: 700, fontSize: ".8rem", letterSpacing: ".06em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: "1rem" }}>
                 Optimized stop order
               </div>
 
-              {/* Depot */}
+              {/* Depot row */}
               <div
                 style={{
                   display: "flex",
@@ -465,6 +714,8 @@ export function QuickRoutePage() {
               {result.route.map((step, idx) => {
                 const mins = Math.round(step.driveSecondsFromPrevious / 60);
                 const isLast = idx === result.route.length - 1;
+                // Build a single-stop Google Maps link for this stop
+                const stopNavUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(step.stops[0]?.address ?? "")}`;
                 return (
                   <div
                     key={step.clusterId}
@@ -496,7 +747,15 @@ export function QuickRoutePage() {
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       {step.stops.map((s, i) => (
-                        <div key={i} style={{ fontSize: ".875rem", fontWeight: i === 0 ? 600 : 400, color: i === 0 ? "var(--text)" : "var(--text-secondary)", marginBottom: i < step.stops.length - 1 ? ".15rem" : 0 }}>
+                        <div
+                          key={i}
+                          style={{
+                            fontSize: ".875rem",
+                            fontWeight: i === 0 ? 600 : 400,
+                            color: i === 0 ? "var(--text)" : "var(--text-secondary)",
+                            marginBottom: i < step.stops.length - 1 ? ".15rem" : 0,
+                          }}
+                        >
                           {s.address}
                         </div>
                       ))}
@@ -506,16 +765,42 @@ export function QuickRoutePage() {
                         </div>
                       )}
                     </div>
-                    <div style={{ fontSize: ".8rem", color: "var(--text-muted)", textAlign: "right", flexShrink: 0, marginTop: 4 }}>
-                      {mins > 0 && <>{mins} min</>}
-                      <div style={{ fontSize: ".75rem" }}>
-                        {step.driveMilesFromPrevious > 0 && `${step.driveMilesFromPrevious} mi`}
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: ".2rem", flexShrink: 0 }}>
+                      <div style={{ fontSize: ".8rem", color: "var(--text-muted)", textAlign: "right" }}>
+                        {mins > 0 && <span>{mins} min</span>}
+                        {step.driveMilesFromPrevious > 0 && (
+                          <div style={{ fontSize: ".75rem" }}>{step.driveMilesFromPrevious} mi</div>
+                        )}
                       </div>
+                      <a
+                        href={stopNavUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          fontSize: ".75rem",
+                          color: "var(--usps-blue)",
+                          fontWeight: 600,
+                          textDecoration: "none",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        Navigate →
+                      </a>
                     </div>
                   </div>
                 );
               })}
             </div>
+
+            {/* Plan another route */}
+            <button
+              type="button"
+              className="btn-secondary"
+              style={{ width: "100%" }}
+              onClick={handleClearAll}
+            >
+              Plan another route
+            </button>
           </div>
         )}
       </div>

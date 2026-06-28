@@ -7,6 +7,8 @@ export interface StationPreset {
   id: string;
   name: string;
   address: string;
+  /** Approximate coordinates for autocomplete biasing. */
+  coords: { lat: number; lng: number };
 }
 
 export const STATIONS: StationPreset[] = [
@@ -14,11 +16,13 @@ export const STATIONS: StationPreset[] = [
     id: "chippewa",
     name: "Chippewa",
     address: "4015 S Main St, South Bend, IN 46614",
+    coords: { lat: 41.6520, lng: -86.2511 },
   },
   {
     id: "mckinley",
     name: "McKinley Ave",
     address: "3800 McKinley Ave, South Bend, IN 46628",
+    coords: { lat: 41.7012, lng: -86.2638 },
   },
 ];
 

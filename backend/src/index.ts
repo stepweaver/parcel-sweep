@@ -14,6 +14,7 @@ import { manifestsRouter } from "./routes/manifests.js";
 import { createRoutesRouter } from "./routes/routes.js";
 import { packagesRouter } from "./routes/packages.js";
 import { adminRouter } from "./routes/admin.js";
+import { geocodeRouter } from "./routes/geocode.js";
 
 function resolveFrontendOrigin(): string {
   if (process.env.FRONTEND_ORIGIN) return process.env.FRONTEND_ORIGIN;
@@ -82,6 +83,7 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/api/optimize-route", optimizeRouteRouter);
+app.use("/api/geocode", geocodeRouter);
 app.use("/api/manifests", manifestsRouter);
 app.use("/api/routes", createRoutesRouter(io));
 app.use("/api/admin", adminRouter);

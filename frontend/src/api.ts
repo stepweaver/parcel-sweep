@@ -477,4 +477,17 @@ export const api = {
         body: JSON.stringify(data),
       }),
   },
+
+  geocode: {
+    autocomplete: (q: string, near?: { lat: number; lng: number }) => {
+      const params = new URLSearchParams({ q });
+      if (near) {
+        params.set("near_lat", String(near.lat));
+        params.set("near_lng", String(near.lng));
+      }
+      return apiFetch<{ suggestions: Array<{ placeId: number; displayName: string; lat: number; lng: number }> }>(
+        `/api/geocode/autocomplete?${params.toString()}`
+      );
+    },
+  },
 };
