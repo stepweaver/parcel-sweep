@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { buildRouteSummaries } from "../services/routeSummaries.js";
-import { buildSundayDashboard } from "../services/sundayDashboard.js";
+import { buildOpsDashboard } from "../services/opsDashboard.js";
 
 export const adminRouter = Router();
 
@@ -13,11 +13,14 @@ adminRouter.get("/routes", (_req: Request, res: Response, next: NextFunction): v
   }
 });
 
-/** Sunday supervisor control tower aggregate view. */
-adminRouter.get("/sunday-dashboard", (_req: Request, res: Response, next: NextFunction): void => {
+/** Supervisor control tower aggregate view. */
+function sendOpsDashboard(_req: Request, res: Response, next: NextFunction): void {
   try {
-    res.json(buildSundayDashboard());
+    res.json(buildOpsDashboard());
   } catch (err) {
     next(err);
   }
-});
+}
+
+adminRouter.get("/ops-dashboard", sendOpsDashboard);
+adminRouter.get("/sunday-dashboard", sendOpsDashboard);

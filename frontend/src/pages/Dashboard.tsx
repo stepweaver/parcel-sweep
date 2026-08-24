@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink } from "react-router-dom";
-import { api, type ManifestSummary, type RouteSummary, type SundayDashboardResponse } from "../api";
+import { api, type ManifestSummary, type RouteSummary, type OpsDashboardResponse } from "../api";
 import { PageShell } from "../components/PageShell";
 import { WorkflowStepper } from "../components/WorkflowStepper";
 import {
@@ -14,7 +14,7 @@ import {
 export function Dashboard() {
   const [manifests, setManifests] = useState<ManifestSummary[]>([]);
   const [routes, setRoutes] = useState<RouteSummary[]>([]);
-  const [sunday, setSunday] = useState<SundayDashboardResponse | null>(null);
+  const [ops, setOps] = useState<OpsDashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -23,12 +23,12 @@ export function Dashboard() {
     Promise.all([
       api.manifests.list(),
       api.routes.list(),
-      api.admin.sundayDashboard().catch(() => null),
+      api.admin.opsDashboard().catch(() => null),
     ])
       .then(([m, r, s]) => {
         setManifests(m);
         setRoutes(r);
-        setSunday(s);
+        setOps(s);
       });
 
   useEffect(() => {
@@ -69,7 +69,7 @@ export function Dashboard() {
 
   const totalPackages = manifests.reduce((s, m) => s + m.totalPackages, 0);
   const activeRoutes = routes.filter((r) => r.status === "in_delivery").length;
-  const exceptionCount = sunday?.inException.length ?? 0;
+  const exceptionCount = ops?.inException.length ?? 0;
 
   return (
     <PageShell
@@ -78,8 +78,8 @@ export function Dashboard() {
       documentTitle="Dashboard"
       actions={
         <>
-          <NavLink to="/sunday" className="btn-primary">
-            Sunday Hub
+          <NavLink to="/ops" className="btn-primary">
+            Ops Hub
           </NavLink>
           <NavLink to="/manifests/new" className="btn-ghost">
             Import Manifest
@@ -92,28 +92,28 @@ export function Dashboard() {
 
       {!loading && (
         <>
-          <section className="card sunday-hub-card" aria-labelledby="sunday-hub-heading" style={{ marginBottom: "1.5rem" }}>
+          <section className="card ops-hub-card" aria-labelledby="ops-hub-heading" style={{ marginBottom: "1.5rem" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1rem", flexWrap: "wrap" }}>
               <div>
-                <h2 id="sunday-hub-heading" className="panel-title" style={{ marginBottom: ".35rem" }}>
-                  Sunday Hub Operations
+                <h2 id="ops-hub-heading" className="panel-title" style={{ marginBottom: ".35rem" }}>
+                  Ops Hub
                 </h2>
                 <p className="text-muted" style={{ fontSize: ".85rem", margin: 0 }}>
-                  Supervisor control tower for Amazon Sunday parcel delivery — manifests, routes, drivers, and exceptions.
+                  Supervisor control tower for parcel delivery — manifests, routes, drivers, and exceptions.
                 </p>
               </div>
               <div style={{ display: "flex", gap: ".5rem", flexWrap: "wrap" }}>
-                <NavLink to="/sunday" className="btn-primary">Open Sunday Hub →</NavLink>
-                <NavLink to="/manifests/new" className="btn-ghost">Import Sunday manifest →</NavLink>
+                <NavLink to="/ops" className="btn-primary">Open Ops Hub →</NavLink>
+                <NavLink to="/manifests/new" className="btn-ghost">Import manifest →</NavLink>
               </div>
             </div>
-            {sunday && (
-              <div className="sunday-hub-card__stats" style={{ marginTop: "1rem" }}>
-                <span><strong>{sunday.kpi.imported}</strong> imported</span>
-                <span><strong>{sunday.kpi.validated}</strong> validated</span>
-                <span><strong>{sunday.kpi.routed}</strong> routed</span>
-                <span><strong>{sunday.kpi.delivered}</strong> delivered</span>
-                <span><strong>{sunday.kpi.activeRouteCount}</strong> active routes</span>
+            {ops && (
+              <div className="ops-hub-card__stats" style={{ marginTop: "1rem" }}>
+                <span><strong>{ops.kpi.imported}</strong> imported</span>
+                <span><strong>{ops.kpi.validated}</strong> validated</span>
+                <span><strong>{ops.kpi.routed}</strong> routed</span>
+                <span><strong>{ops.kpi.delivered}</strong> delivered</span>
+                <span><strong>{ops.kpi.activeRouteCount}</strong> active routes</span>
                 {exceptionCount > 0 && (
                   <span style={{ color: "#f59e0b" }}><strong>{exceptionCount}</strong> exceptions</span>
                 )}
@@ -151,7 +151,7 @@ export function Dashboard() {
               {manifests.length === 0 ? (
                 <div className="text-meta" style={{ textAlign: "center", padding: "1.5rem" }}>
                   No manifests yet.<br />
-                  <Link to="/manifests/new">Import a Sunday manifest to get started.</Link>
+                  <Link to="/manifests/new">Import a manifest to get started.</Link>
                 </div>
               ) : (
                 <div>

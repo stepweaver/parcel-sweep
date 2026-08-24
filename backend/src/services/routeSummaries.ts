@@ -1,6 +1,6 @@
 import { getDb } from "../db/index.js";
 import { queryAll } from "../db/helpers.js";
-import { SUNDAY_DEFAULTS } from "../config/sundayDefaults.js";
+import { OPS_DEFAULTS } from "../config/opsDefaults.js";
 import { RouteRow, RouteSummary } from "../types/index.js";
 
 interface RouteListRow extends RouteRow {
@@ -96,14 +96,14 @@ export function buildRouteSummaries(): RouteSummary[] {
         loadElapsedMinutes = Math.round(
           (new Date(r.departed_at).getTime() - new Date(r.loaded_at).getTime()) / 60000
         );
-        loadTimerBreached = loadElapsedMinutes > SUNDAY_DEFAULTS.loadWithinMinutes;
+        loadTimerBreached = loadElapsedMinutes > OPS_DEFAULTS.loadWithinMinutes;
       }
     }
 
     if (r.begin_tour_at && r.status === "in_delivery") {
       deliverElapsedMinutes = Math.round((now - new Date(r.begin_tour_at).getTime()) / 60000);
       const completedStops = r.stop_count - r.remaining_stops;
-      if (completedStops === 0 && deliverElapsedMinutes > SUNDAY_DEFAULTS.deliverWithinMinutes) {
+      if (completedStops === 0 && deliverElapsedMinutes > OPS_DEFAULTS.deliverWithinMinutes) {
         deliverTimerBreached = true;
       }
     }

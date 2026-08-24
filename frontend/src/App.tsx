@@ -1,10 +1,10 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Navigate, Routes, Route } from "react-router-dom";
 import { AppFooter } from "./components/AppFooter";
 import { AppNav } from "./components/AppNav";
 import { ThemeProvider } from "./context/ThemeProvider";
 import { Dashboard } from "./pages/Dashboard";
 import { Admin } from "./pages/Admin";
-import { SundayDashboard } from "./pages/SundayDashboard";
+import { OpsDashboard } from "./pages/OpsDashboard";
 import { ManifestPage } from "./pages/ManifestPage";
 import { LoadingDock } from "./pages/LoadingDock";
 import { RouteView } from "./pages/RouteView";
@@ -27,7 +27,8 @@ export default function App() {
               <AppNav />
               <Routes>
                 <Route path="/" element={<Dashboard />} />
-                <Route path="/sunday" element={<SundayDashboard />} />
+                <Route path="/ops" element={<OpsDashboard />} />
+                <Route path="/sunday" element={<Navigate to="/ops" replace />} />
                 <Route path="/admin" element={<Admin />} />
                 <Route path="/manifests/:id" element={<ManifestPage />} />
                 <Route path="/routes/:id/load" element={<LoadingDock />} />

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, type SundayDashboardResponse } from "../api";
+import { api, type OpsDashboardResponse } from "../api";
 import { PageShell } from "../components/PageShell";
 import { routeStageHref } from "../utils/routeDisplay";
 
 const POLL_MS = 15_000;
 
-function demoRouteHref(data: SundayDashboardResponse): string | null {
+function demoRouteHref(data: OpsDashboardResponse): string | null {
   const delivery = data.activeRoutes.find((r) => r.status === "in_delivery");
   if (delivery) return `/routes/${delivery.routeId}/drive?demo=1`;
   const optimized = data.activeRoutes.find((r) => r.status === "optimized");
@@ -14,8 +14,8 @@ function demoRouteHref(data: SundayDashboardResponse): string | null {
   return null;
 }
 
-export function SundayDashboard() {
-  const [data, setData] = useState<SundayDashboardResponse | null>(null);
+export function OpsDashboard() {
+  const [data, setData] = useState<OpsDashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -23,7 +23,7 @@ export function SundayDashboard() {
   const refresh = useCallback(async (showSpinner = false) => {
     if (showSpinner) setLoading(true);
     try {
-      const dash = await api.admin.sundayDashboard();
+      const dash = await api.admin.opsDashboard();
       setData(dash);
       setError(null);
       setLastUpdated(new Date());
@@ -44,7 +44,7 @@ export function SundayDashboard() {
 
   return (
     <PageShell
-      title="Sunday Hub Operations Dashboard"
+      title="Ops Hub"
       subtitle={
         <>
           HUB: {data?.hubId ?? "—"} {data?.hubZip ? `· ZIP ${data.hubZip}` : ""}
@@ -52,7 +52,7 @@ export function SundayDashboard() {
           {data?.operationDate ? ` · ${data.operationDate}` : ""}
         </>
       }
-      documentTitle="Sunday Hub"
+      documentTitle="Ops Hub"
       actions={
         <>
           {lastUpdated && (
@@ -69,9 +69,9 @@ export function SundayDashboard() {
 
       {data && (
         <>
-          <section className="card sunday-quick-actions" aria-label="Quick actions" style={{ marginBottom: "1.5rem" }}>
+          <section className="card ops-quick-actions" aria-label="Quick actions" style={{ marginBottom: "1.5rem" }}>
             <h2 className="panel-title" style={{ marginBottom: ".75rem" }}>Quick Actions</h2>
-            <div className="sunday-quick-actions__row">
+            <div className="ops-quick-actions__row">
               <Link to="/manifests/new" className="btn-primary">Import Manifest</Link>
               {data.activeManifestId ? (
                 <Link to={`/manifests/${data.activeManifestId}`} className="btn-ghost">Review Holds</Link>
@@ -89,9 +89,9 @@ export function SundayDashboard() {
             </div>
           </section>
 
-          <section className="card sunday-projected-strip" aria-label="Projected versus actual" style={{ marginBottom: "1.5rem" }}>
+          <section className="card ops-projected-strip" aria-label="Projected versus actual" style={{ marginBottom: "1.5rem" }}>
             <h2 className="panel-title" style={{ marginBottom: ".75rem" }}>Projected vs. Actual</h2>
-            <div className="sunday-kpi-strip">
+            <div className="ops-kpi-strip">
               <div><strong>{data.kpi.routeCount}</strong><span>Routes planned</span></div>
               <div><strong>{data.kpi.imported}</strong><span>Parcels released</span></div>
               <div><strong>{data.kpi.loaded}</strong><span>Loaded</span></div>
@@ -101,7 +101,7 @@ export function SundayDashboard() {
             </div>
           </section>
 
-          <div className="sunday-kpi-strip card" style={{ marginBottom: "1.5rem" }}>
+          <div className="ops-kpi-strip card" style={{ marginBottom: "1.5rem" }}>
             <div><strong>{data.kpi.imported}</strong><span>Imported</span></div>
             <div><strong>{data.kpi.validated}</strong><span>Validated</span></div>
             <div><strong>{data.kpi.routed}</strong><span>Routed</span></div>
@@ -115,7 +115,7 @@ export function SundayDashboard() {
             <section className="card" aria-label="Route readiness clocks" style={{ marginBottom: "1.5rem" }}>
               <h2 className="panel-title" style={{ marginBottom: ".75rem" }}>Route Readiness Clocks</h2>
               <p className="text-muted" style={{ fontSize: ".85rem", marginBottom: "1rem" }}>
-                USPS Sunday targets: load within 15 minutes of begin tour · first delivery within 45 minutes.
+                Load within 15 minutes of begin tour · first delivery within 45 minutes.
               </p>
               <div className="readiness-clocks">
                 {data.activeRoutes.map((r) => (
@@ -162,16 +162,16 @@ export function SundayDashboard() {
             </section>
           )}
 
-          <div className="sunday-tower grid-3">
-            <section className="card sunday-lane sunday-lane--not-ready">
+          <div className="ops-tower grid-3">
+            <section className="card ops-lane ops-lane--not-ready">
               <h2 className="panel-title">Not Ready</h2>
               {data.notReady.length === 0 ? (
                 <p className="text-muted">No blockers</p>
               ) : (
-                <ul className="sunday-lane__list">
+                <ul className="ops-lane__list">
                   {data.notReady.map((item, i) => (
                     <li key={i}>
-                      <span className="sunday-lane__count">{item.count}</span>
+                      <span className="ops-lane__count">{item.count}</span>
                       {item.label}
                     </li>
                   ))}
@@ -179,12 +179,12 @@ export function SundayDashboard() {
               )}
             </section>
 
-            <section className="card sunday-lane sunday-lane--ready">
+            <section className="card ops-lane ops-lane--ready">
               <h2 className="panel-title">Ready to Dispatch</h2>
               {data.readyToDispatch.length === 0 ? (
                 <p className="text-muted">No routes ready</p>
               ) : (
-                <ul className="sunday-lane__list">
+                <ul className="ops-lane__list">
                   {data.readyToDispatch.map((r) => (
                     <li key={r.routeId}>
                       <Link to={`/routes/${r.routeId}/route`}>
@@ -199,12 +199,12 @@ export function SundayDashboard() {
               )}
             </section>
 
-            <section className="card sunday-lane sunday-lane--exception">
+            <section className="card ops-lane ops-lane--exception">
               <h2 className="panel-title">In Exception</h2>
               {data.inException.length === 0 ? (
                 <p className="text-muted">No active exceptions</p>
               ) : (
-                <ul className="sunday-lane__list">
+                <ul className="ops-lane__list">
                   {data.inException.map((item, i) => (
                     <li key={i}>
                       {item.routeId ? (

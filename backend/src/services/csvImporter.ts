@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { getDb } from "../db/index.js";
 import { exec, queryAll } from "../db/helpers.js";
-import { SUNDAY_DEFAULTS } from "../config/sundayDefaults.js";
+import { OPS_DEFAULTS } from "../config/opsDefaults.js";
 import {
   ManifestRowInput,
   validateManifestRow,
@@ -22,7 +22,7 @@ const CSV_COLUMNS = [
   "width_in",
   "height_in",
   "hazmat_flag",
-  "sunday_eligible",
+  "eligible",
   "pod_required",
   "service_type",
   "delivery_notes",
@@ -91,9 +91,11 @@ export function parseCsvToRows(csvText: string): ManifestRowInput[] {
       widthIn: parseInt(get("width_in"), 10) || 0,
       heightIn: parseInt(get("height_in"), 10) || 0,
       hazmatFlag: parseBool(get("hazmat_flag")),
-      sundayEligible: get("sunday_eligible") ? parseBool(get("sunday_eligible")) : true,
+      eligible: (get("eligible") || get("sunday_eligible"))
+        ? parseBool(get("eligible") || get("sunday_eligible"))
+        : true,
       podRequired: parseBool(get("pod_required")),
-      serviceType: get("service_type") || "Priority Mail",
+      serviceType: get("service_type") || "Standard",
       deliveryNotes: get("delivery_notes") || undefined,
     });
   }
@@ -101,7 +103,7 @@ export function parseCsvToRows(csvText: string): ManifestRowInput[] {
 }
 
 export function csvTemplate(): string {
-  return [CSV_COLUMNS.join(","), "9400111899223344661401,Jane Doe,123 Main St,Apt 2B,South Bend,IN,46614,16,12,10,8,false,true,false,Priority Mail,Gate code 4421"].join("\n");
+  return [CSV_COLUMNS.join(","), "9400111899223344661401,Jane Doe,123 Main St,Apt 2B,South Bend,IN,46614,16,12,10,8,false,true,false,Standard,Gate code 4421"].join("\n");
 }
 
 export interface ImportManifestOptions {
@@ -127,7 +129,7 @@ export async function importManifestFromCsv(
     throw new Error("hubZip must be a 5-digit ZIP.");
   }
 
-  const allowedZips = options.allowedZips ?? SUNDAY_DEFAULTS.multiZipCodes;
+  const allowedZips = options.allowedZips ?? OPS_DEFAULTS.multiZipCodes;
   const db = getDb();
 
   const existing = queryAll<{ tracking_number: string }>(
@@ -212,14 +214,14 @@ export async function importManifestFromCsv(
         row.zip.slice(0, 5),
         v.lat,
         v.lng,
-        row.serviceType ?? "Priority Mail",
+        row.serviceType ?? "Standard",
         row.weightOz ?? 16,
         row.lengthIn ?? 0,
         row.widthIn ?? 0,
         row.heightIn ?? 0,
         row.hazmatFlag ? 1 : 0,
         v.oversizeFlag ? 1 : 0,
-        row.sundayEligible !== false ? 1 : 0,
+        row.eligible !== false ? 1 : 0,
         row.podRequired ? 1 : 0,
         row.deliveryNotes ?? null,
         v.validationStatus,

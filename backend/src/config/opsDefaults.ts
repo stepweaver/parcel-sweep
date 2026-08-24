@@ -1,9 +1,9 @@
-/** USPS Sunday operations defaults (hub-and-spoke, DRT-style). */
+/** Default capacity and timing targets for hub-and-spoke delivery operations. */
 
-export const SUNDAY_DEFAULTS = {
-  maxRouteDurationMinutes: 300,
+export const OPS_DEFAULTS = {
   maxPackagesPerRoute: 80,
   maxStopsPerRoute: 40,
+  maxRouteDurationMinutes: 300,
   dwellSecondsPerStop: 120,
   loadWithinMinutes: 15,
   deliverWithinMinutes: 45,
@@ -13,4 +13,4 @@ export const SUNDAY_DEFAULTS = {
   maxGirthIn: 130,
 } as const;
 
-export type SundayDefaults = typeof SUNDAY_DEFAULTS;
+export type OpsDefaults = typeof OPS_DEFAULTS;

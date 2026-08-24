@@ -263,7 +263,7 @@ export interface ProposeRoutesResponse {
     maxPackagesPerRoute: number;
     maxStopsPerRoute: number;
     maxRouteDurationMinutes: number;
-    sundayMode: boolean;
+    opsMode: boolean;
   };
   summary: {
     totalPackages: number;
@@ -298,7 +298,7 @@ export interface PackageDetail {
   heightIn?: number;
   hazmatFlag?: boolean;
   oversizeFlag?: boolean;
-  sundayEligible?: boolean;
+  eligible?: boolean;
   podRequired?: boolean;
   deliveryNotes?: string | null;
   validationStatus?: ValidationStatus;
@@ -405,7 +405,7 @@ export interface ManifestValidationResponse {
   packages: PackageDetail[];
 }
 
-export interface SundayDashboardResponse {
+export interface OpsDashboardResponse {
   hubId: string | null;
   hubZip: string | null;
   dutTime: string | null;

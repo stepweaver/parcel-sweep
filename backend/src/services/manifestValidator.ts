@@ -1,4 +1,4 @@
-import { SUNDAY_DEFAULTS } from "../config/sundayDefaults.js";
+import { OPS_DEFAULTS } from "../config/opsDefaults.js";
 
 export type ValidationStatus = "verified" | "warning" | "hold" | "duplicate";
 export type QuarantineStatus = "none" | "hold" | "released";
@@ -16,7 +16,7 @@ export interface ManifestRowInput {
   widthIn?: number;
   heightIn?: number;
   hazmatFlag?: boolean;
-  sundayEligible?: boolean;
+  eligible?: boolean;
   podRequired?: boolean;
   serviceType?: string;
   deliveryNotes?: string;
@@ -133,15 +133,15 @@ export function validateManifestRow(
   const ht = row.heightIn ?? 0;
   const girth = len + 2 * (wid + ht);
 
-  if (weight > SUNDAY_DEFAULTS.maxWeightOz || len > SUNDAY_DEFAULTS.maxDimensionIn || girth > SUNDAY_DEFAULTS.maxGirthIn) {
+  if (weight > OPS_DEFAULTS.maxWeightOz || len > OPS_DEFAULTS.maxDimensionIn || girth > OPS_DEFAULTS.maxGirthIn) {
     reasons.push("OVERSIZE");
     oversizeFlag = true;
     validationStatus = "hold";
     quarantineStatus = "hold";
   }
 
-  if (row.sundayEligible === false) {
-    reasons.push("SUNDAY_INELIGIBLE");
+  if (row.eligible === false) {
+    reasons.push("INELIGIBLE");
     validationStatus = "hold";
     quarantineStatus = "hold";
   }

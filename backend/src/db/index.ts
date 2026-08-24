@@ -44,7 +44,7 @@ function initSchema(db: DatabaseSync): void {
       lat              REAL NOT NULL,
       lng              REAL NOT NULL,
       package_count    INTEGER NOT NULL DEFAULT 1,
-      service_type     TEXT NOT NULL DEFAULT 'Priority Mail',
+      service_type     TEXT NOT NULL DEFAULT 'Standard',
       weight_oz        INTEGER NOT NULL DEFAULT 16,
       status           TEXT NOT NULL DEFAULT 'pending',
       is_ghost         INTEGER NOT NULL DEFAULT 0,

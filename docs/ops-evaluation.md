@@ -1,4 +1,4 @@
-# USPS Sunday Evaluation — Parcel Sweep Baseline
+# Operations Evaluation — Parcel Sweep Baseline
 
 **Date:** 2026-06-15  
 **Environment:** Local dev (`npm run dev`), ZIP 46614 (South Bend), Chippewa depot  
@@ -47,7 +47,7 @@
 
 1. No CSV manifest import or validation review screen
 2. No quarantine/hold workflow for bad addresses, duplicates, hazmat, oversize
-3. No Sunday operations mode (DUT, load/deliver timers, duration caps)
+3. No operations mode (DUT, load/deliver timers, duration caps)
 4. No supervisor control tower (Not Ready / Ready / In Exception)
 5. Capacity and route-duration constraints not enforced in default workflow
 6. No audit trail for supervisor overrides
@@ -60,10 +60,10 @@ Re-run this document's scenario matrix and B1–B10 after P0 implementation. Lar
 
 UI and discoverability updates applied for supervisor acceptance testing:
 
-- Top nav: Dashboard, Sunday Hub, Manifests, Routes & Drivers
-- Dashboard: Sunday Hub entry card + workflow stepper
+- Top nav: Dashboard, Ops Hub, Manifests, Routes & Drivers
+- Dashboard: Ops Hub entry card + workflow stepper
 - Semantic HTML: `h1`/`main` per page, per-route `document.title`, noscript module list
-- Sunday Hub: readiness clocks, projected vs. actual strip, quick actions
+- Ops Hub: readiness clocks, projected vs. actual strip, quick actions
 - Supervisor runbook: `docs/supervisor-acceptance-test.md`
 
 **Re-test checklist:**
@@ -72,7 +72,7 @@ UI and discoverability updates applied for supervisor acceptance testing:
 |---|---|
 | Manifest/Route/Driver not discoverable | Nav + stepper + page headings expose all three |
 | Machine-readable content missing | `h1`, `main`, noscript, dynamic titles |
-| Sunday readiness not verifiable | `/sunday` clocks + exception lanes |
+| readiness not verifiable | `/ops` clocks + exception lanes |
 | Test plan not executable | Follow supervisor-acceptance-test.md |
 
 **Target readiness:** Green for supervised acceptance testing; Amber for operational deployment until AMS/DPV, irregularity taxonomy, and closeout reports land.

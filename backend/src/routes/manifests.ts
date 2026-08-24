@@ -247,6 +247,7 @@ manifestsRouter.post(
         maxPackagesPerRoute,
         maxStopsPerRoute,
         maxRouteDurationMinutes,
+        opsMode,
         sundayMode,
       } = req.body as {
         startAddress?: string;
@@ -256,6 +257,7 @@ manifestsRouter.post(
         maxPackagesPerRoute?: number;
         maxStopsPerRoute?: number;
         maxRouteDurationMinutes?: number;
+        opsMode?: boolean;
         sundayMode?: boolean;
       };
 
@@ -278,7 +280,7 @@ manifestsRouter.post(
         maxPackagesPerRoute,
         maxStopsPerRoute,
         maxRouteDurationMinutes,
-        sundayMode: sundayMode !== false,
+        opsMode: (opsMode ?? sundayMode) !== false,
       });
 
       res.json(result);

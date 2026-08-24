@@ -1,6 +1,6 @@
 /** Station and driver defaults for South Bend operations. */
 
-/** Future role-based landing: "/" for general ops, "/sunday" for supervisor role. */
+/** Future role-based landing: "/" for general ops, "/ops" for supervisor role. */
 export const DEFAULT_LANDING = "/" as const;
 
 export interface StationPreset {
@@ -37,7 +37,7 @@ export const SERVICE_AREA = {
 
 export const DEFAULT_DRIVER_NAMES = ["Driver 1", "Driver 2", "Driver 3"];
 
-export const SUNDAY_DEFAULTS = {
+export const OPS_DEFAULTS = {
   maxRouteDurationMinutes: 300,
   maxPackagesPerRoute: 80,
   maxStopsPerRoute: 40,

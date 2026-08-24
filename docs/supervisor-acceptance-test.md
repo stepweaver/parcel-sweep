@@ -1,6 +1,6 @@
-# Supervisor Acceptance Test — Parcel Sweep Sunday Operations
+# Supervisor Acceptance Test — Parcel Sweep Operations
 
-**Purpose:** Repeatable hands-on test mapping the USPS Sunday supervisory evaluation (10-step plan) to Parcel Sweep UI actions and test fixtures.
+**Purpose:** Repeatable hands-on test mapping the supervisory evaluation (10-step plan) to Parcel Sweep UI actions and test fixtures.
 
 **Environment:** Local (`npm run dev`) or production (`https://parcel-sweep.up.railway.app`)
 
@@ -13,12 +13,12 @@
 | Module | Path | Top nav label |
 |--------|------|---------------|
 | Dashboard + workflow stepper | `/` | Dashboard |
-| Sunday supervisor tower | `/sunday` | Sunday Hub |
+| Ops Hub | `/ops` | Ops Hub |
 | Manifest intake / review | `/manifests/new`, `/manifests/:id` | Manifests |
 | Fleet + drivers | `/admin` | Routes & Drivers |
 | Loading dock | `/routes/:id/load` | (from workflow stepper or route list) |
-| Route plan + export | `/routes/:id/route` | (from Sunday Hub or loading dock) |
-| Driver / simulation | `/routes/:id/drive?demo=1` | Sunday Hub → Run Driver Demo |
+| Route plan + export | `/routes/:id/route` | (from Ops Hub or loading dock) |
+| Driver / simulation | `/routes/:id/drive?demo=1` | Ops Hub → Run Driver Demo |
 
 ---
 
@@ -40,9 +40,9 @@
 ### 1. Open application and confirm operational entry point
 
 1. Open `/`
-2. Confirm top nav shows: **Dashboard**, **Sunday Hub**, **Manifests**, **Routes & Drivers**
-3. Confirm **Sunday Hub Operations** card and **Sunday Workflow** stepper are visible
-4. Open `/sunday` — confirm **Sunday Hub Operations Dashboard** heading and KPI strip
+2. Confirm top nav shows: **Dashboard**, **Ops Hub**, **Manifests**, **Routes & Drivers**
+3. Confirm **Ops Hub** card and **Operations Workflow** stepper are visible
+4. Open `/ops` — confirm **Ops Hub** heading and KPI strip
 
 **Pass:** Manifest, route, and driver vocabulary appears in nav, headings, and noscript fallback (view page source).
 
@@ -50,8 +50,8 @@
 
 ### 2. Create sample manifests
 
-1. Nav → **Manifests** (or Dashboard → Import Sunday manifest)
-2. **Upload Sunday manifest** — paste or upload `small-clean-10.csv`
+1. Nav → **Manifests** (or Dashboard → Import manifest)
+2. **Upload manifest** — paste or upload `small-clean-10.csv`
 3. Set Hub ZIP `46614`, DUT `09:30`, today's operation date
 4. Click **Import & validate**
 5. Repeat with `edge-cases-only.csv` on a fresh manifest (delete prior test data if needed)
@@ -71,10 +71,10 @@
 
 ---
 
-### 4. Generate Sunday routes
+### 4. Generate routes
 
 1. On manifest detail, scroll to **Plan & split routes**
-2. Confirm Sunday caps displayed (80 pkg / 40 stops / 300 min)
+2. Confirm route caps displayed (80 pkg / 40 stops / 300 min)
 3. Set station Chippewa, driver count `3` (or `2` for small manifest)
 4. Click **Plan N routes**
 5. Review proposals for feasibility warnings
@@ -95,13 +95,13 @@
 
 ### 6. Validate route-release and loading readiness
 
-1. Open **Sunday Hub** (`/sunday`)
+1. Open **Ops Hub** (`/ops`)
 2. Confirm **Route Readiness Clocks** panel (after first scan / begin tour)
 3. Open **Loading Dock** for a route
 4. Confirm DUT and **Load timer** (15-minute target) display
 5. Scan packages; observe timer after first scan
 
-**Pass:** DUT and load/deliver targets visible on Sunday Hub and Loading Dock.
+**Pass:** DUT and load/deliver targets visible on Ops Hub and Loading Dock.
 
 ---
 
@@ -109,22 +109,22 @@
 
 1. Complete loading → **Begin Tour** → **Route Plan**
 2. **Export route book (CSV/GPX/KML)** from Route Plan
-3. **Start Delivery** or use Sunday Hub → **Run Driver Demo**
+3. **Start Delivery** or use Ops Hub → **Run Driver Demo**
 4. In driver view, tap **Demo** to simulate movement
 5. Complete stops; scan a ghost package at loading dock to create an exception
 
-**Pass:** Demo mode runs; ghost packages surface in Sunday Hub **In Exception**.
+**Pass:** Demo mode runs; ghost packages surface in Ops Hub **In Exception**.
 
 ---
 
 ### 8. Review completion and irregularity reporting
 
-1. Return to **Sunday Hub**
+1. Return to **Ops Hub**
 2. Check **Projected vs. Actual** strip (planned routes, loaded, delivered, on street, exceptions)
 3. Review **Not Ready**, **Ready to Dispatch**, **In Exception** lanes
 4. Confirm KPI counts update after deliveries
 
-**Pass:** Supervisor can assess operation state from `/sunday` without deep links.
+**Pass:** Supervisor can assess operation state from `/ops` without deep links.
 
 ---
 
@@ -149,21 +149,21 @@
 ## Quick smoke (5 minutes)
 
 ```text
-/ → Sunday Hub card visible
+/ → Ops Hub card visible
 /manifests/new → import small-clean-10.csv
 /manifests/:id → plan 2 routes, assign drivers
 /routes/:id/load → scan all, begin tour
-/sunday → KPIs and lanes render
+/ops → KPIs and lanes render
 ```
 
 ---
 
 ## Post-certification gaps (not required for this test)
 
-- USPS AMS/DPV street-level validation
+- Certified street-level address validation
 - Formal irregularity taxonomy (second drop, non-scannable label, etc.)
 - Audit log / end-of-day report UI
 - Driver capability profiles
 - Authentication and role-based default landing
 
-See `docs/usps-sunday-evaluation.md` for baseline scenario matrix.
+See `docs/ops-evaluation.md` for baseline scenario matrix.

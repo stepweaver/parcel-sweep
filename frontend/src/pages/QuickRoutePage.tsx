@@ -337,8 +337,8 @@ export function QuickRoutePage() {
                   padding: ".4rem .9rem",
                   borderRadius: 999,
                   border: "1.5px solid",
-                  borderColor: startMode === mode ? "var(--usps-blue)" : "var(--border)",
-                  background: startMode === mode ? "var(--usps-blue)" : "transparent",
+                  borderColor: startMode === mode ? "var(--brand)" : "var(--border)",
+                  background: startMode === mode ? "var(--brand)" : "transparent",
                   color: startMode === mode ? "#fff" : "var(--text)",
                   fontWeight: 600,
                   fontSize: ".85rem",
@@ -424,7 +424,7 @@ export function QuickRoutePage() {
               style={{
                 background: "transparent",
                 border: "none",
-                color: "var(--usps-blue)",
+                color: "var(--brand)",
                 fontWeight: 600,
                 fontSize: ".82rem",
                 cursor: "pointer",
@@ -492,7 +492,7 @@ export function QuickRoutePage() {
                     width: 26,
                     height: 26,
                     borderRadius: "50%",
-                    background: stop.address.trim() ? "var(--usps-blue)" : "var(--border)",
+                    background: stop.address.trim() ? "var(--brand)" : "var(--border)",
                     color: stop.address.trim() ? "#fff" : "var(--text-muted)",
                     display: "flex",
                     alignItems: "center",
@@ -556,7 +556,7 @@ export function QuickRoutePage() {
               background: "transparent",
               border: "1.5px dashed var(--border)",
               borderRadius: "var(--radius)",
-              color: "var(--usps-blue)",
+              color: "var(--brand)",
               fontWeight: 600,
               fontSize: ".875rem",
               padding: ".45rem .85rem",
@@ -615,7 +615,7 @@ export function QuickRoutePage() {
                 { label: "Distance", value: `${result.summary.estimatedDriveMiles} mi` },
               ].map(({ label, value }) => (
                 <div key={label} style={{ background: "var(--surface)", padding: ".75rem 1rem", textAlign: "center" }}>
-                  <div style={{ fontSize: "1.3rem", fontWeight: 800, color: "var(--usps-blue)" }}>{value}</div>
+                  <div style={{ fontSize: "1.3rem", fontWeight: 800, color: "var(--brand)" }}>{value}</div>
                   <div style={{ fontSize: ".78rem", color: "var(--text-muted)", marginTop: ".1rem" }}>{label}</div>
                 </div>
               ))}
@@ -762,7 +762,7 @@ export function QuickRoutePage() {
                         width: 28,
                         height: 28,
                         borderRadius: "50%",
-                        background: "var(--usps-blue)",
+                        background: "var(--brand)",
                         color: "#fff",
                         display: "flex",
                         alignItems: "center",
@@ -807,7 +807,7 @@ export function QuickRoutePage() {
                         rel="noopener noreferrer"
                         style={{
                           fontSize: ".75rem",
-                          color: "var(--usps-blue)",
+                          color: "var(--brand)",
                           fontWeight: 600,
                           textDecoration: "none",
                           whiteSpace: "nowrap",

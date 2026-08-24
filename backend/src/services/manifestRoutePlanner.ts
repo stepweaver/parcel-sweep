@@ -1,7 +1,7 @@
 import { fetchLegMetricsWithFallback } from "./matrixBuilder.js";
 import { planRouteFromPackages, PlannedStop } from "./routePlanner.js";
 import { PackageRow, RouteRow, LatLng, RouteProposal, RouteProposalStop } from "../types/index.js";
-import { SUNDAY_DEFAULTS } from "../config/sundayDefaults.js";
+import { OPS_DEFAULTS } from "../config/opsDefaults.js";
 import { packageIsRoutable } from "./packageMappers.js";
 
 const METERS_PER_MILE = 1609.344;
@@ -17,7 +17,7 @@ export interface ProposeRoutesOptions {
   maxPackagesPerRoute?: number;
   maxStopsPerRoute?: number;
   maxRouteDurationMinutes?: number;
-  sundayMode?: boolean;
+  opsMode?: boolean;
   dwellSecondsPerStop?: number;
 }
 
@@ -208,7 +208,7 @@ export async function proposeRoutesForManifest(
     maxPackagesPerRoute: number;
     maxStopsPerRoute: number;
     maxRouteDurationMinutes: number;
-    sundayMode: boolean;
+    opsMode: boolean;
   };
   summary: {
     totalPackages: number;
@@ -233,11 +233,11 @@ export async function proposeRoutesForManifest(
     throw new Error("All routable packages on this manifest are already assigned to routes.");
   }
 
-  const sundayMode = options.sundayMode !== false;
-  const maxPackages = options.maxPackagesPerRoute ?? SUNDAY_DEFAULTS.maxPackagesPerRoute;
-  const maxStops = options.maxStopsPerRoute ?? SUNDAY_DEFAULTS.maxStopsPerRoute;
-  const maxDurationMinutes = options.maxRouteDurationMinutes ?? SUNDAY_DEFAULTS.maxRouteDurationMinutes;
-  const dwellSecondsPerStop = options.dwellSecondsPerStop ?? SUNDAY_DEFAULTS.dwellSecondsPerStop;
+  const opsMode = options.opsMode !== false;
+  const maxPackages = options.maxPackagesPerRoute ?? OPS_DEFAULTS.maxPackagesPerRoute;
+  const maxStops = options.maxStopsPerRoute ?? OPS_DEFAULTS.maxStopsPerRoute;
+  const maxDurationMinutes = options.maxRouteDurationMinutes ?? OPS_DEFAULTS.maxRouteDurationMinutes;
+  const dwellSecondsPerStop = options.dwellSecondsPerStop ?? OPS_DEFAULTS.dwellSecondsPerStop;
 
   const syntheticRoute = buildSyntheticRoute(manifestId, options);
   const osrmBaseUrl = process.env.OSRM_BASE_URL ?? "http://router.project-osrm.org";
@@ -255,8 +255,8 @@ export async function proposeRoutesForManifest(
 
   let chunks = splitStopsByDriverCount(plan.stops, driverCount);
 
-  // Sunday mode always enforces capacity caps
-  if (sundayMode || options.maxPackagesPerRoute !== undefined || options.maxStopsPerRoute !== undefined) {
+  // Capacity caps are always enforced in operations mode
+  if (opsMode || options.maxPackagesPerRoute !== undefined || options.maxStopsPerRoute !== undefined) {
     chunks = chunks.flatMap((chunk) => splitStopsIntoChunks(chunk, maxPackages, maxStops));
   }
 
@@ -283,7 +283,7 @@ export async function proposeRoutesForManifest(
       maxPackagesPerRoute: maxPackages,
       maxStopsPerRoute: maxStops,
       maxRouteDurationMinutes: maxDurationMinutes,
-      sundayMode,
+      opsMode,
     },
     summary: {
       totalPackages: planPackages.length,

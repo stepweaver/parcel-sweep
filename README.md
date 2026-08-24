@@ -54,7 +54,7 @@ Built as a demo and starting point — not production-hardened, but end-to-end a
 ## Workflow
 
 ```
-Sunday Hub (supervisor) ← Dashboard workflow stepper
+Ops Hub (supervisor) ← Dashboard workflow stepper
        ↓
 Import Manifest (CSV) → Validation results → Plan & split routes → Assign drivers
        ↓
@@ -62,13 +62,13 @@ Loading Dock (scan packages, optimize) → Route Plan (review, export route book
        ↓
 Start Delivery → Driver View (GPS, demo simulation, stop completion)
        ↓
-Sunday Hub / Routes & Drivers (monitor fleet, readiness clocks, exceptions)
+Ops Hub / Routes & Drivers (monitor fleet, readiness clocks, exceptions)
 ```
 
 | View | Path | Nav label | Who |
 |------|------|-----------|-----|
 | Dashboard | `/` | Dashboard | Dispatcher / supervisor entry |
-| Sunday Hub | `/sunday` | Sunday Hub | Supervisor |
+| Ops Hub | `/ops` | Ops Hub | Supervisor |
 | Manifest intake | `/manifests/new` | Manifests | Dispatcher |
 | Manifest review | `/manifests/:id` | — | Dispatcher |
 | Routes & Drivers | `/admin` | Routes & Drivers | Operations |
@@ -235,7 +235,7 @@ This is a **prototype**, not a production system. Keep in mind:
 
 - **No authentication** — admin and API endpoints are open; add auth before any real deployment
 - **Public OSRM** — the default OSRM instance is rate-limited with no SLA; run your own for production
-- **Synthetic data** — manifests use randomly generated recipients and USPS-style tracking numbers on real OSM addresses
+- **Synthetic data** — manifests use randomly generated recipients and tracking numbers on real OSM addresses
 - **Demo GPS** — driver view includes a simulated drive mode when live GPS is unavailable
 - **SQLite** — fine for demos and single-node deploys; consider Postgres for multi-instance production
 

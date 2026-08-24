@@ -33,7 +33,7 @@ export function toPackageDetail(p: PackageRow): PackageDetail {
     heightIn: p.height_in,
     hazmatFlag: p.hazmat_flag === 1,
     oversizeFlag: p.oversize_flag === 1,
-    sundayEligible: p.sunday_eligible !== 0,
+    eligible: p.sunday_eligible !== 0,
     podRequired: p.pod_required === 1,
     deliveryNotes: p.delivery_notes ?? null,
     validationStatus: p.validation_status ?? "verified",

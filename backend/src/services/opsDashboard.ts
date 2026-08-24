@@ -1,12 +1,12 @@
 import { getDb } from "../db/index.js";
 import { queryAll, queryOne } from "../db/helpers.js";
-import { SUNDAY_DEFAULTS } from "../config/sundayDefaults.js";
+import { OPS_DEFAULTS } from "../config/opsDefaults.js";
 import { buildRouteSummaries } from "./routeSummaries.js";
 import { toManifestSummary } from "./packageMappers.js";
-import { ManifestRow, PackageRow, SundayDashboardResponse } from "../types/index.js";
+import { ManifestRow, PackageRow, OpsDashboardResponse } from "../types/index.js";
 import { parseValidationReasons } from "./packageMappers.js";
 
-export function buildSundayDashboard(): SundayDashboardResponse {
+export function buildOpsDashboard(): OpsDashboardResponse {
   const db = getDb();
 
   const activeManifest = queryOne<ManifestRow>(
@@ -39,7 +39,7 @@ export function buildSundayDashboard(): SundayDashboardResponse {
     }
   }
 
-  const notReady: SundayDashboardResponse["notReady"] = [];
+  const notReady: OpsDashboardResponse["notReady"] = [];
   for (const [reason, count] of Object.entries(heldByReason)) {
     notReady.push({
       type: "package_hold",
@@ -60,7 +60,7 @@ export function buildSundayDashboard(): SundayDashboardResponse {
     });
   }
 
-  const readyToDispatch: SundayDashboardResponse["readyToDispatch"] = routes
+  const readyToDispatch: OpsDashboardResponse["readyToDispatch"] = routes
     .filter((r) => r.status === "optimized" && (r.loadedPackageCount ?? 0) > 0)
     .map((r) => ({
       routeId: r.id,
@@ -71,13 +71,13 @@ export function buildSundayDashboard(): SundayDashboardResponse {
       dutTime: activeManifest?.dut_time ?? null,
       loadElapsedMinutes: r.loadElapsedMinutes ?? null,
       deliverElapsedMinutes: r.deliverElapsedMinutes ?? null,
-      loadWithinMinutes: SUNDAY_DEFAULTS.loadWithinMinutes,
-      deliverWithinMinutes: SUNDAY_DEFAULTS.deliverWithinMinutes,
+      loadWithinMinutes: OPS_DEFAULTS.loadWithinMinutes,
+      deliverWithinMinutes: OPS_DEFAULTS.deliverWithinMinutes,
       loadTimerBreached: r.loadTimerBreached ?? false,
       deliverTimerBreached: r.deliverTimerBreached ?? false,
     }));
 
-  const inException: SundayDashboardResponse["inException"] = [];
+  const inException: OpsDashboardResponse["inException"] = [];
 
   const ghosts = allPackages.filter((p) => p.is_ghost === 1);
   if (ghosts.length) {
@@ -92,7 +92,7 @@ export function buildSundayDashboard(): SundayDashboardResponse {
     if (r.loadTimerBreached) {
       inException.push({
         type: "load_timer",
-        label: `Route ${r.routeNumber ?? r.id.slice(0, 8)} load exceeded ${SUNDAY_DEFAULTS.loadWithinMinutes}m`,
+        label: `Route ${r.routeNumber ?? r.id.slice(0, 8)} load exceeded ${OPS_DEFAULTS.loadWithinMinutes}m`,
         routeId: r.id,
         detail: `${r.loadElapsedMinutes ?? "?"} min`,
       });
@@ -100,7 +100,7 @@ export function buildSundayDashboard(): SundayDashboardResponse {
     if (r.deliverTimerBreached) {
       inException.push({
         type: "deliver_timer",
-        label: `Route ${r.routeNumber ?? r.id.slice(0, 8)} not delivering within ${SUNDAY_DEFAULTS.deliverWithinMinutes}m`,
+        label: `Route ${r.routeNumber ?? r.id.slice(0, 8)} not delivering within ${OPS_DEFAULTS.deliverWithinMinutes}m`,
         routeId: r.id,
         detail: `${r.deliverElapsedMinutes ?? "?"} min since begin tour`,
       });
@@ -123,7 +123,7 @@ export function buildSundayDashboard(): SundayDashboardResponse {
 
   const activeRouteCount = routes.filter((r) => r.status === "in_delivery").length;
 
-  const activeRoutes: SundayDashboardResponse["activeRoutes"] = routes
+  const activeRoutes: OpsDashboardResponse["activeRoutes"] = routes
     .filter((r) => ["loading", "optimized", "in_delivery"].includes(r.status))
     .map((r) => {
       const routePackages = allPackages.filter((p) => p.assigned_route_id === r.id);
@@ -137,8 +137,8 @@ export function buildSundayDashboard(): SundayDashboardResponse {
         beginTourAt: r.beginTourAt ?? null,
         loadElapsedMinutes: r.loadElapsedMinutes ?? null,
         deliverElapsedMinutes: r.deliverElapsedMinutes ?? null,
-        loadWithinMinutes: SUNDAY_DEFAULTS.loadWithinMinutes,
-        deliverWithinMinutes: SUNDAY_DEFAULTS.deliverWithinMinutes,
+        loadWithinMinutes: OPS_DEFAULTS.loadWithinMinutes,
+        deliverWithinMinutes: OPS_DEFAULTS.deliverWithinMinutes,
         loadTimerBreached: r.loadTimerBreached ?? false,
         deliverTimerBreached: r.deliverTimerBreached ?? false,
         packageCount: routePackages.length,

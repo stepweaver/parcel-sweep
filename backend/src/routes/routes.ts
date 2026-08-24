@@ -7,9 +7,9 @@ import { haversineMeters } from "../services/clusterer.js";
 import { planRouteFromPackages, resolveDepot } from "../services/routePlanner.js";
 import { buildGpx, buildKml, buildCsv } from "../services/routeExporter.js";
 import { buildRouteSummaries } from "../services/routeSummaries.js";
-import { manifestHasBlockingHolds } from "../services/sundayDashboard.js";
+import { manifestHasBlockingHolds } from "../services/opsDashboard.js";
 import { toPackageDetail } from "../services/packageMappers.js";
-import { SUNDAY_DEFAULTS } from "../config/sundayDefaults.js";
+import { OPS_DEFAULTS } from "../config/opsDefaults.js";
 import {
   PackageRow,
   RouteRow,
@@ -108,8 +108,8 @@ export function createRoutesRouter(io: SocketServer): Router {
       loadedAt: route.loaded_at ?? null,
       departedAt: route.departed_at ?? null,
       dutTime: manifest?.dut_time ?? null,
-      loadWithinMinutes: SUNDAY_DEFAULTS.loadWithinMinutes,
-      deliverWithinMinutes: SUNDAY_DEFAULTS.deliverWithinMinutes,
+      loadWithinMinutes: OPS_DEFAULTS.loadWithinMinutes,
+      deliverWithinMinutes: OPS_DEFAULTS.deliverWithinMinutes,
       stops: stopDetails,
     };
   }

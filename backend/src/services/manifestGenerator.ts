@@ -27,9 +27,9 @@ const LAST_NAMES = [
   "Young","Allen","King","Wright","Scott","Torres","Nguyen","Hill","Flores",
 ];
 const SERVICE_TYPES = [
-  "Priority Mail","Priority Mail",
-  "First-Class Package","First-Class Package",
-  "USPS Retail Ground","Media Mail",
+  "Priority", "Priority",
+  "Express", "Standard",
+  "Ground", "Media",
 ];
 
 function randomItem<T>(arr: T[]): T {

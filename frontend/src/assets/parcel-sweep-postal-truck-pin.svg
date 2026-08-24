@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 80" role="img" aria-labelledby="title desc">
-  <title id="title">Parcel Sweep postal truck map pin</title>
-  <desc id="desc">A custom postal-style delivery truck map pin. Not an official USPS logo.</desc>
+  <title id="title">Parcel Sweep delivery truck map pin</title>
+  <desc id="desc">A custom delivery truck map pin.</desc>
   <defs>
     <filter id="shadow" x="-25%" y="-15%" width="150%" height="150%">
       <feDropShadow dx="0" dy="5" stdDeviation="4" flood-color="#020617" flood-opacity="0.35"/>

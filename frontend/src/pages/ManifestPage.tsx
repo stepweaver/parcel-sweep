@@ -15,7 +15,7 @@ import { PageShell } from "../components/PageShell";
 import {
   DEFAULT_STATION,
   STATIONS,
-  SUNDAY_DEFAULTS,
+  OPS_DEFAULTS,
   getRecentDrivers,
   rememberDriver,
 } from "../config/operations";
@@ -120,10 +120,10 @@ export function ManifestPage() {
       const result = await api.manifests.proposeRoutes(manifest.id, {
         startAddress,
         driverCount,
-        sundayMode: true,
-        maxPackagesPerRoute: SUNDAY_DEFAULTS.maxPackagesPerRoute,
-        maxStopsPerRoute: SUNDAY_DEFAULTS.maxStopsPerRoute,
-        maxRouteDurationMinutes: SUNDAY_DEFAULTS.maxRouteDurationMinutes,
+        opsMode: true,
+        maxPackagesPerRoute: OPS_DEFAULTS.maxPackagesPerRoute,
+        maxStopsPerRoute: OPS_DEFAULTS.maxStopsPerRoute,
+        maxRouteDurationMinutes: OPS_DEFAULTS.maxRouteDurationMinutes,
       });
       setPlanResult(result);
       initProposalForms(result.proposals);
@@ -336,7 +336,7 @@ export function ManifestPage() {
 
         {importMode === "csv" ? (
           <div className="card" style={{ maxWidth: 720 }}>
-            <h2 className="panel-title" style={{ marginBottom: "1rem" }}>Upload Sunday manifest</h2>
+            <h2 className="panel-title" style={{ marginBottom: "1rem" }}>Upload manifest</h2>
 
             <div className="grid-2" style={{ marginBottom: ".75rem" }}>
               <label>
@@ -509,7 +509,7 @@ export function ManifestPage() {
                   <th>Status</th>
                   <th>Hazmat</th>
                   <th>Oversize</th>
-                  <th>Sunday</th>
+                  <th>Eligible</th>
                   <th>Reasons</th>
                   <th>Action</th>
                 </tr>
@@ -522,7 +522,7 @@ export function ManifestPage() {
                     <td>{validationStatusLabel(p.validationStatus)}</td>
                     <td>{p.hazmatFlag ? "Yes" : "No"}</td>
                     <td>{p.oversizeFlag ? "Yes" : "No"}</td>
-                    <td>{p.sundayEligible === false ? "No" : "Yes"}</td>
+                    <td>{p.eligible === false ? "No" : "Yes"}</td>
                     <td className="text-meta">{(p.validationReasons ?? []).join(", ")}</td>
                     <td>
                       {p.quarantineStatus === "hold" && (
@@ -646,7 +646,7 @@ export function ManifestPage() {
         <h2 className="panel-title" style={{ marginBottom: ".5rem" }}>Plan &amp; split routes</h2>
         <p className="text-muted" style={{ fontSize: ".85rem", marginBottom: "1rem" }}>
           Optimize all unassigned packages, then split evenly across the available drivers.
-          Sunday caps: {SUNDAY_DEFAULTS.maxPackagesPerRoute} packages · {SUNDAY_DEFAULTS.maxStopsPerRoute} stops · {SUNDAY_DEFAULTS.maxRouteDurationMinutes} min per route.
+          Route caps: {OPS_DEFAULTS.maxPackagesPerRoute} packages · {OPS_DEFAULTS.maxStopsPerRoute} stops · {OPS_DEFAULTS.maxRouteDurationMinutes} min per route.
           {assignedCount > 0 && (
             <> {assignedCount} already assigned · {unassignedCount} remaining to plan.</>
           )}

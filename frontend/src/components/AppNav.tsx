@@ -4,7 +4,7 @@ import { ThemeSelector } from "./ThemeSelector";
 
 const NAV_ITEMS: { to: string; end?: boolean; label: string }[] = [
   { to: "/", end: true, label: "Dashboard" },
-  { to: "/sunday", label: "Sunday Hub" },
+  { to: "/ops", label: "Ops Hub" },
   { to: "/manifests/new", label: "Manifests" },
   { to: "/admin", label: "Routes & Drivers" },
   { to: "/quick-route", label: "Quick Route" },

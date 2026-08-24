@@ -62,7 +62,7 @@ export function deriveWorkflowSteps(
     { id: "loading", label: "Loading", href: loadingRoute ? `/routes/${loadingRoute.id}/load` : undefined },
     { id: "dispatch", label: "Dispatch", href: optimizedRoute ? `/routes/${optimizedRoute.id}/route` : undefined },
     { id: "delivery", label: "Delivery", href: deliveryRoute ? routeHref(deliveryRoute) : undefined },
-    { id: "closeout", label: "Closeout", href: "/sunday" },
+    { id: "closeout", label: "Closeout", href: "/ops" },
   ];
 
   const completions = [
@@ -90,8 +90,8 @@ export function WorkflowStepper({ manifests, routes }: WorkflowStepperProps) {
   const steps = deriveWorkflowSteps(manifests, routes);
 
   return (
-    <nav className="workflow-stepper card" aria-label="Sunday operations workflow">
-      <h2 className="panel-title" style={{ marginBottom: ".75rem" }}>Sunday Workflow</h2>
+    <nav className="workflow-stepper card" aria-label="Operations workflow">
+      <h2 className="panel-title" style={{ marginBottom: ".75rem" }}>Operations Workflow</h2>
       <ol className="workflow-stepper__list">
         {steps.map((step) => {
           const content = (
