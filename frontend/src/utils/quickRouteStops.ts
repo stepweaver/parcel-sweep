@@ -10,12 +10,15 @@ import {
   requestedStreetMatchesCandidate,
   streetPortion,
 } from "./addressMatch";
+import type { SegmentedAddress } from "./addressSegmenter";
+import { parsePastedAddresses as segmentPastedAddresses } from "./addressSegmenter";
 
 export type VerificationStatus = "unresolved" | "needs_review" | "verified";
 
 export interface QuickRouteStop {
   id: string;
   rawInput: string;
+  searchInput?: string;
   address: string;
   lat?: number;
   lng?: number;
@@ -23,6 +26,8 @@ export interface QuickRouteStop {
   confidence?: AddressConfidence;
   verificationStatus: VerificationStatus;
   reviewCandidates?: AddressSuggestion[];
+  unresolvedReason?: string;
+  duplicateKept?: boolean;
 }
 
 const STRONG_CONFIDENCE: ReadonlySet<AddressConfidence> = new Set([
@@ -34,16 +39,30 @@ export function newStop(address = ""): QuickRouteStop {
   return {
     id: crypto.randomUUID(),
     rawInput: address,
+    searchInput: address,
     address,
     verificationStatus: "unresolved",
   };
 }
 
+export function newStopFromSegment(segment: SegmentedAddress, id?: string): QuickRouteStop {
+  return {
+    id: id ?? crypto.randomUUID(),
+    rawInput: segment.rawInput,
+    searchInput: segment.searchInput,
+    address: segment.searchInput,
+    verificationStatus: "unresolved",
+  };
+}
+
 export function parsePastedAddresses(text: string): string[] {
-  return text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+  return segmentPastedAddresses(text);
+}
+
+export function matchInputFor(stop: Pick<QuickRouteStop, "rawInput" | "searchInput">): string {
+  const search = stop.searchInput?.trim();
+  if (search) return search;
+  return stop.rawInput.trim();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -54,12 +73,14 @@ export function migrateQuickRouteStop(raw: unknown): QuickRouteStop | null {
   if (!isRecord(raw) || typeof raw.id !== "string") return null;
   const address = typeof raw.address === "string" ? raw.address : "";
   const rawInput = typeof raw.rawInput === "string" ? raw.rawInput : address;
+  const searchInput = typeof raw.searchInput === "string" ? raw.searchInput : undefined;
   const hasNewShape = "verificationStatus" in raw || "rawInput" in raw;
 
   if (!hasNewShape) {
     return {
       id: raw.id,
       rawInput: address,
+      searchInput: address,
       address,
       verificationStatus: "unresolved",
     };
@@ -75,12 +96,14 @@ export function migrateQuickRouteStop(raw: unknown): QuickRouteStop | null {
   const lng = typeof raw.lng === "number" ? raw.lng : undefined;
   const placeId = typeof raw.placeId === "string" ? raw.placeId : undefined;
   const confidence = isAddressConfidence(raw.confidence) ? raw.confidence : undefined;
+  const duplicateKept = raw.duplicateKept === true;
 
   // Never keep a stop verified without usable coordinates.
   if (verificationStatus === "verified" && !hasUsableGeometry(lat, lng)) {
     return {
       id: raw.id,
       rawInput,
+      searchInput,
       address,
       verificationStatus: "unresolved",
     };
@@ -90,20 +113,24 @@ export function migrateQuickRouteStop(raw: unknown): QuickRouteStop | null {
     return {
       id: raw.id,
       rawInput,
+      searchInput,
       address,
       lat,
       lng,
       placeId,
       confidence,
       verificationStatus: "verified",
+      duplicateKept,
     };
   }
 
   return {
     id: raw.id,
     rawInput,
+    searchInput,
     address,
     verificationStatus,
+    duplicateKept,
   };
 }
 
@@ -170,9 +197,32 @@ export function applyStopTextEdit(stop: QuickRouteStop, text: string): QuickRout
   if (stop.address === text) return stop;
   return {
     id: stop.id,
-    rawInput: text,
+    rawInput: stop.rawInput && stop.rawInput !== stop.address ? stop.rawInput : text,
+    searchInput: text,
     address: text,
     verificationStatus: "unresolved",
+    unresolvedReason: undefined,
+    reviewCandidates: undefined,
+    lat: undefined,
+    lng: undefined,
+    placeId: undefined,
+    confidence: undefined,
+  };
+}
+
+export function applyStopSearchEdit(stop: QuickRouteStop, text: string): QuickRouteStop {
+  if (stop.searchInput === text && stop.address === text) return stop;
+  return {
+    ...stop,
+    searchInput: text,
+    address: text,
+    lat: undefined,
+    lng: undefined,
+    placeId: undefined,
+    confidence: undefined,
+    verificationStatus: "unresolved",
+    unresolvedReason: undefined,
+    reviewCandidates: undefined,
   };
 }
 
@@ -180,9 +230,10 @@ export function applyStopSuggestion(
   stop: QuickRouteStop,
   suggestion: AddressSuggestion,
   rawInput: string,
-  options?: { userConfirmed?: boolean }
+  options?: { userConfirmed?: boolean; matchInput?: string }
 ): QuickRouteStop {
-  const evaluation = evaluateAddressSuggestion(rawInput, suggestion);
+  const matchInput = options?.matchInput ?? rawInput;
+  const evaluation = evaluateAddressSuggestion(matchInput, suggestion);
   let verificationStatus = evaluation.verificationStatus;
   if (options?.userConfirmed && evaluation.canConfirm) {
     verificationStatus = "verified";
@@ -193,16 +244,91 @@ export function applyStopSuggestion(
   return {
     ...stop,
     rawInput,
+    searchInput: stop.searchInput ?? matchInput,
     address: suggestion.displayName,
     lat: geometryOk ? suggestion.lat : undefined,
     lng: geometryOk ? suggestion.lng : undefined,
     placeId: suggestion.placeId,
     confidence: suggestion.confidence,
     verificationStatus,
+    unresolvedReason: verificationStatus === "unresolved" ? undefined : stop.unresolvedReason,
     reviewCandidates:
       verificationStatus === "needs_review"
         ? validReviewCandidates(stop.reviewCandidates, suggestion)
         : undefined,
+  };
+}
+
+export interface BatchEntryResult {
+  id: string;
+  rawInput: string;
+  normalizedInput: string;
+  status: VerificationStatus;
+  candidate?: AddressSuggestion;
+  candidates?: AddressSuggestion[];
+  reason?: string;
+}
+
+/**
+ * Apply a batch (or re-resolve) result onto an existing stop.
+ * Preserves id and original rawInput. Re-runs Phase 1 evaluation so the
+ * batch path cannot verify a candidate autocomplete would reject.
+ */
+export function applyResolvedBatchEntry(stop: QuickRouteStop, result: BatchEntryResult): QuickRouteStop {
+  const rawInput = stop.rawInput || result.rawInput;
+  const matchInput = result.normalizedInput || matchInputFor(stop);
+  const confirmable = confirmableCandidates(result.candidates ?? [], matchInput);
+
+  if (result.candidate) {
+    const evaluation = evaluateAddressSuggestion(matchInput, result.candidate);
+    let verificationStatus = evaluation.verificationStatus;
+    if (result.status !== "verified" && verificationStatus === "verified") {
+      verificationStatus = result.status;
+    }
+    if (result.status === "verified" && verificationStatus !== "verified") {
+      verificationStatus = evaluation.canConfirm ? "needs_review" : "unresolved";
+    }
+    if (verificationStatus === "verified" && !evaluation.canConfirm) {
+      verificationStatus = "needs_review";
+    }
+
+    const geometryOk = hasUsableGeometry(result.candidate.lat, result.candidate.lng);
+    return {
+      ...stop,
+      id: stop.id,
+      rawInput,
+      searchInput: matchInput,
+      address:
+        verificationStatus === "verified" || evaluation.canConfirm
+          ? result.candidate.displayName
+          : matchInput,
+      lat: geometryOk && (verificationStatus === "verified" || evaluation.canConfirm)
+        ? result.candidate.lat
+        : undefined,
+      lng: geometryOk && (verificationStatus === "verified" || evaluation.canConfirm)
+        ? result.candidate.lng
+        : undefined,
+      placeId: result.candidate.placeId,
+      confidence: result.candidate.confidence,
+      verificationStatus,
+      reviewCandidates: verificationStatus === "needs_review" ? confirmable : undefined,
+      unresolvedReason: verificationStatus === "unresolved" ? result.reason : undefined,
+    };
+  }
+
+  return {
+    ...stop,
+    id: stop.id,
+    rawInput,
+    searchInput: matchInput,
+    address: matchInput,
+    lat: undefined,
+    lng: undefined,
+    placeId: undefined,
+    confidence: undefined,
+    verificationStatus: "unresolved",
+    reviewCandidates: undefined,
+    unresolvedReason: result.reason ?? "No confident match",
   };
 }
 
@@ -219,6 +345,15 @@ function validReviewCandidates(
     out.push(s);
   }
   return out;
+}
+
+export function mergeImportedStops(
+  existing: QuickRouteStop[],
+  incoming: QuickRouteStop[],
+  replace: boolean
+): QuickRouteStop[] {
+  if (replace) return incoming.length > 0 ? incoming : [newStop(), newStop()];
+  return [...existing.filter(stopIsFilled), ...incoming];
 }
 
 export function stopIsFilled(stop: QuickRouteStop): boolean {

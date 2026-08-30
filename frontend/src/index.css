@@ -1497,6 +1497,255 @@ select:focus {
   border-color: var(--brand);
 }
 
+.quick-route-review-option:focus-visible {
+  border-color: var(--brand);
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.batch-entry-panel {
+  margin-bottom: 1rem;
+  padding: 0.85rem;
+  background: var(--hover-bg);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.batch-entry-copy,
+.batch-entry-hint,
+.batch-entry-meta {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+  line-height: 1.4;
+}
+
+.batch-entry-transcript {
+  width: 100%;
+  min-height: 140px;
+  font-family: inherit;
+  font-size: 16px;
+  padding: 0.65rem 0.75rem;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--input-bg);
+  color: var(--text);
+  resize: vertical;
+  outline: none;
+  line-height: 1.4;
+}
+
+.batch-entry-speech {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin-top: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.batch-mic-btn {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 0.9rem;
+  border-radius: 999px;
+  border: 1.5px solid var(--brand);
+  background: transparent;
+  color: var(--brand);
+  font-weight: 700;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.batch-mic-btn.is-listening {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #fff;
+}
+
+.batch-listening-state {
+  font-size: 0.85rem;
+  color: #dc2626;
+  font-weight: 600;
+  flex: 1;
+  min-width: 12rem;
+}
+
+.batch-speech-fallback {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.batch-entry-error {
+  color: #dc2626;
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+  line-height: 1.4;
+}
+
+.batch-entry-clear {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  margin: 0.65rem 0;
+  min-height: 44px;
+}
+
+.batch-entry-clear input {
+  width: 18px;
+  height: 18px;
+}
+
+.batch-entry-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.batch-entry-actions .btn-primary,
+.batch-entry-actions .btn-secondary {
+  min-height: 44px;
+}
+
+.batch-summary {
+  margin-top: 0.85rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.batch-summary-total {
+  font-weight: 800;
+  margin-bottom: 0.35rem;
+}
+
+.batch-summary-row {
+  font-size: 0.9rem;
+  font-weight: 650;
+  margin-top: 0.15rem;
+}
+
+.batch-summary-row.ok {
+  color: #16a34a;
+}
+
+.batch-summary-row.review {
+  color: #d97706;
+}
+
+.batch-summary-row.unresolved {
+  color: #dc2626;
+}
+
+.batch-summary-total-line {
+  margin-top: 0.45rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.batch-review-section {
+  margin-top: 0.85rem;
+}
+
+.batch-review-heading {
+  font-weight: 700;
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 0.45rem;
+}
+
+.batch-exception-card {
+  padding: 0.7rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  margin-bottom: 0.5rem;
+}
+
+.batch-exception-label {
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.batch-exception-raw,
+.batch-exception-reason {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 0.2rem;
+}
+
+.batch-exception-edit {
+  width: 100%;
+  margin-top: 0.5rem;
+  min-height: 44px;
+  font-size: 16px;
+  padding: 0.45rem 0.65rem;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--input-bg);
+  color: var(--text);
+}
+
+.batch-action-btn {
+  min-height: 44px;
+  margin-top: 0.45rem;
+  margin-right: 0.4rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: var(--radius);
+  border: 1.5px solid var(--brand);
+  background: transparent;
+  color: var(--brand);
+  font-weight: 700;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.batch-duplicate {
+  margin-top: 0.45rem;
+  font-size: 0.85rem;
+  color: #d97706;
+  font-weight: 650;
+}
+
+.batch-duplicate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.batch-verified-toggle {
+  min-height: 44px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-weight: 700;
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 0.25rem 0;
+}
+
+.batch-verified-row {
+  font-size: 0.85rem;
+  padding: 0.35rem 0;
+  border-top: 1px solid var(--row-border);
+}
+
+.batch-exception-card .quick-route-review-option {
+  min-height: 44px;
+}
+
+@media (pointer: coarse) {
+  .quick-route-review-option {
+    min-height: 44px;
+  }
+}
+
 label > div:first-child {
   font-family: var(--font-ocr);
   font-size: 0.62rem;

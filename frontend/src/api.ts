@@ -268,6 +268,57 @@ export interface QuickRouteStopInput {
   verificationStatus?: "unresolved" | "needs_review" | "verified";
 }
 
+export interface BatchResolveRequestEntry {
+  id: string;
+  rawInput: string;
+  searchInput?: string;
+}
+
+export interface BatchResolveCandidate {
+  placeId: string;
+  displayName: string;
+  lat?: number;
+  lng?: number;
+  confidence:
+    | "verified_rooftop"
+    | "verified_parcel"
+    | "interpolated"
+    | "street_matched_number_unverified"
+    | "street_only"
+    | "ambiguous";
+  rankReason: string;
+  distanceMeters?: number;
+  city?: string;
+  state?: string;
+  zip?: string;
+  houseNumber?: string;
+  street?: string;
+}
+
+export interface BatchResolveResult {
+  id: string;
+  rawInput: string;
+  normalizedInput: string;
+  status: "unresolved" | "needs_review" | "verified";
+  candidate?: BatchResolveCandidate;
+  candidates?: BatchResolveCandidate[];
+  reason?: string;
+}
+
+export interface BatchCountSummary {
+  parsed: number;
+  verified: number;
+  needsReview: number;
+  unresolved: number;
+  accountedFor: number;
+  ok: boolean;
+}
+
+export interface BatchResolveResponse {
+  results: BatchResolveResult[];
+  count: BatchCountSummary;
+}
+
 export interface QuickRouteRequest {
   startAddress: string;
   startCoords?: { lat: number; lng: number };
@@ -518,5 +569,10 @@ export const api = {
         }>;
       }>(`/api/geocode/autocomplete?${params.toString()}`);
     },
+    resolveBatch: (addresses: BatchResolveRequestEntry[]) =>
+      apiFetch<BatchResolveResponse>("/api/geocode/resolve-batch", {
+        method: "POST",
+        body: JSON.stringify({ addresses }),
+      }),
   },
 };

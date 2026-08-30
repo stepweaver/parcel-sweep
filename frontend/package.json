@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --import tsx --test src/utils/*.test.ts"
   },
   "dependencies": {
     "leaflet": "^1.9.4",

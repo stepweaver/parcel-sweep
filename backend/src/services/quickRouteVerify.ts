@@ -38,12 +38,7 @@ export interface AddressEvaluation {
 
 const PLACE_GEOMETRY_TOLERANCE_METERS = 150;
 
-export function parsePastedAddresses(text: string): string[] {
-  return text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-}
+export { parsePastedAddresses } from "./addressSegmenter.js";
 
 export function evaluateAddressSuggestion(
   rawInput: string,

@@ -1,17 +1,29 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type QuickRouteResponse } from "../api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api, type BatchCountSummary, type BatchResolveCandidate, type QuickRouteResponse } from "../api";
 import { STATIONS, DEFAULT_STATION } from "../config/operations";
 import { QUICK_ROUTE_SERVICE_AREA } from "../config/quickRouteServiceArea";
 import { QuickRouteMap } from "../components/QuickRouteMap";
 import { AddressAutocomplete, type AddressSuggestion } from "../components/AddressAutocomplete";
+import { BatchEntryPanel } from "../components/BatchEntryPanel";
 import { googleMapsStopUrl, wazeStopUrl } from "../utils/navigationLinks";
+import { segmentAddresses, appendTranscript } from "../utils/addressSegmenter";
 import {
+  detectProbableDuplicates,
+  keepDuplicateStop,
+  removeDuplicateStop,
+  summarizeVerificationCounts,
+} from "../utils/batchAccounting";
+import {
+  applyResolvedBatchEntry,
+  applyStopSearchEdit,
   applyStopSuggestion,
   applyStopTextEdit,
   confirmableCandidates,
+  matchInputFor,
+  mergeImportedStops,
   migrateSavedStops,
   newStop,
-  parsePastedAddresses,
+  newStopFromSegment,
   stopBlocksRoute,
   stopIsFilled,
   type QuickRouteStop,
@@ -83,6 +95,23 @@ function verificationLabel(status: VerificationStatus): string {
   return "Unresolved";
 }
 
+function toSuggestion(candidate: BatchResolveCandidate): AddressSuggestion {
+  return {
+    placeId: candidate.placeId,
+    displayName: candidate.displayName,
+    lat: candidate.lat,
+    lng: candidate.lng,
+    confidence: candidate.confidence,
+    rankReason: candidate.rankReason,
+    distanceMeters: candidate.distanceMeters,
+    city: candidate.city,
+    state: candidate.state,
+    zip: candidate.zip,
+    houseNumber: candidate.houseNumber,
+    street: candidate.street,
+  };
+}
+
 export function QuickRoutePage() {
   const saved = loadSaved();
 
@@ -99,9 +128,16 @@ export function QuickRoutePage() {
   const [locatedLabel, setLocatedLabel] = useState("");
   const [locationError, setLocationError] = useState("");
 
-  // Bulk paste panel
-  const [showPaste, setShowPaste] = useState(false);
-  const [pasteText, setPasteText] = useState("");
+  // Batch entry panel
+  const [showBatch, setShowBatch] = useState(false);
+  const [transcript, setTranscript] = useState("");
+  const [clearExisting, setClearExisting] = useState(false);
+  const [resolvingBatch, setResolvingBatch] = useState(false);
+  const [resolvingStopId, setResolvingStopId] = useState<string | null>(null);
+  const [batchSummary, setBatchSummary] = useState<BatchCountSummary | null>(null);
+  const [batchCountError, setBatchCountError] = useState("");
+  const [batchResolveError, setBatchResolveError] = useState("");
+  const [verifiedExpanded, setVerifiedExpanded] = useState(false);
 
   // Submission
   const [loading, setLoading] = useState(false);
@@ -155,7 +191,11 @@ export function QuickRoutePage() {
       const idx = prev.findIndex((s) => s.id === stopId);
       if (idx < 0) return prev;
       const updated = prev.map((s) =>
-        s.id === stopId ? applyStopSuggestion(s, suggestion, rawInput) : s
+        s.id === stopId
+          ? applyStopSuggestion(s, suggestion, s.rawInput.trim() ? s.rawInput : rawInput, {
+              matchInput: rawInput,
+            })
+          : s
       );
       const selected = updated[idx];
       if (selected.verificationStatus !== "verified") return updated;
@@ -177,7 +217,12 @@ export function QuickRoutePage() {
   const handleConfirmCandidate = useCallback((stopId: string, suggestion: AddressSuggestion) => {
     setStops((prev) =>
       prev.map((s) =>
-        s.id === stopId ? applyStopSuggestion(s, suggestion, s.rawInput, { userConfirmed: true }) : s
+        s.id === stopId
+          ? applyStopSuggestion(s, suggestion, s.rawInput, {
+              userConfirmed: true,
+              matchInput: matchInputFor(s),
+            })
+          : s
       )
     );
   }, []);
@@ -248,23 +293,146 @@ export function QuickRoutePage() {
     handleLocate({ silent: true });
   }, [locatedCoords, locating, handleLocate]);
 
-  /** Parse pasted text into stop entries and append to list. Newline is the delimiter. */
-  const handlePasteImport = useCallback(() => {
-    const lines = parsePastedAddresses(pasteText);
-    if (lines.length === 0) return;
-    const imported = lines.map((addr) => newStop(addr));
+  const handleSearchEdit = useCallback((id: string, text: string) => {
+    setStops((prev) => prev.map((s) => (s.id === id ? applyStopSearchEdit(s, text) : s)));
+  }, []);
+
+  const handleResolveBatch = useCallback(async () => {
+    const segments = segmentAddresses(transcript);
+    if (segments.length === 0) {
+      setBatchResolveError("No addresses to resolve.");
+      return;
+    }
+    setBatchResolveError("");
+    setBatchCountError("");
+    setResolvingBatch(true);
+    try {
+      const payload = segments.map((segment) => ({
+        id: crypto.randomUUID(),
+        rawInput: segment.rawInput,
+        searchInput: segment.searchInput,
+      }));
+      const res = await api.geocode.resolveBatch(payload);
+      const byId = new Map(res.results.map((r) => [r.id, r]));
+      const incoming = payload.map((entry, i) => {
+        const stop = newStopFromSegment(segments[i], entry.id);
+        const result = byId.get(entry.id);
+        if (!result) {
+          return {
+            ...stop,
+            unresolvedReason: "Batch processing error: this address was not returned.",
+          };
+        }
+        return applyResolvedBatchEntry(stop, {
+          id: result.id,
+          rawInput: result.rawInput,
+          normalizedInput: result.normalizedInput,
+          status: result.status,
+          candidate: result.candidate ? toSuggestion(result.candidate) : undefined,
+          candidates: result.candidates?.map(toSuggestion),
+          reason: result.reason,
+        });
+      });
+      const count = summarizeVerificationCounts(
+        segments.length,
+        incoming.map((s) => s.verificationStatus)
+      );
+      setBatchSummary(count);
+      if (!count.ok || res.results.length !== segments.length || (res.count && !res.count.ok)) {
+        setBatchCountError(
+          "Batch processing error: every heard or pasted address must be accounted for. Route generation stays blocked."
+        );
+      }
+      setStops((prev) => mergeImportedStops(prev, incoming, clearExisting));
+    } catch (err) {
+      setBatchResolveError(err instanceof Error ? err.message : "Could not resolve addresses.");
+    } finally {
+      setResolvingBatch(false);
+    }
+  }, [transcript, clearExisting]);
+
+  const handleResolveAgain = useCallback(async (stopId: string) => {
+    const stop = stops.find((s) => s.id === stopId);
+    if (!stop) return;
+    setResolvingStopId(stopId);
+    setBatchResolveError("");
+    try {
+      const res = await api.geocode.resolveBatch([
+        {
+          id: stop.id,
+          rawInput: stop.rawInput,
+          searchInput: matchInputFor(stop),
+        },
+      ]);
+      const result = res.results[0];
+      if (!result || result.id !== stop.id) {
+        setBatchCountError(
+          "Batch processing error: re-resolve did not return the same stop. Route generation stays blocked."
+        );
+        setStops((prev) =>
+          prev.map((s) =>
+            s.id === stopId
+              ? {
+                  ...s,
+                  verificationStatus: "unresolved" as const,
+                  unresolvedReason: "Address service unavailable — try again.",
+                }
+              : s
+          )
+        );
+        return;
+      }
+      setStops((prev) =>
+        prev.map((s) =>
+          s.id === stopId
+            ? applyResolvedBatchEntry(s, {
+                id: result.id,
+                rawInput: result.rawInput,
+                normalizedInput: result.normalizedInput,
+                status: result.status,
+                candidate: result.candidate ? toSuggestion(result.candidate) : undefined,
+                candidates: result.candidates?.map(toSuggestion),
+                reason: result.reason,
+              })
+            : s
+        )
+      );
+    } catch {
+      setStops((prev) =>
+        prev.map((s) =>
+          s.id === stopId
+            ? {
+                ...s,
+                verificationStatus: "unresolved" as const,
+                unresolvedReason: "Address service unavailable — try again.",
+              }
+            : s
+        )
+      );
+    } finally {
+      setResolvingStopId(null);
+    }
+  }, [stops]);
+
+  const handleKeepDuplicate = useCallback((stopId: string) => {
+    setStops((prev) => keepDuplicateStop(prev, stopId));
+  }, []);
+
+  const handleRemoveDuplicate = useCallback((stopId: string) => {
     setStops((prev) => {
-      const filled = prev.filter((s) => stopIsFilled(s));
-      return [...filled, ...imported];
+      const next = removeDuplicateStop(prev, stopId);
+      return next.length > 0 ? next : [newStop(), newStop()];
     });
-    setPasteText("");
-    setShowPaste(false);
-  }, [pasteText]);
+  }, []);
 
   const handleClearAll = useCallback(() => {
     setStops([newStop(), newStop()]);
     setResult(null);
     setError("");
+    setBatchSummary(null);
+    setBatchCountError("");
+    setBatchResolveError("");
+    setTranscript("");
   }, []);
 
   const selectedStation = STATIONS.find((s) => s.id === stationId) ?? DEFAULT_STATION;
@@ -290,11 +458,16 @@ export function QuickRoutePage() {
         : customStartCoords ?? undefined;
 
   const filledStops = stops.filter((s) => stopIsFilled(s));
+  const duplicates = useMemo(
+    () => detectProbableDuplicates(filledStops),
+    [filledStops]
+  );
   const hasUnverifiedStops = filledStops.some((s) => stopBlocksRoute(s));
   const canSubmit =
     !loading &&
     filledStops.length >= 1 &&
     !hasUnverifiedStops &&
+    !batchCountError &&
     resolvedStartAddress.length > 0 &&
     (startMode !== "location" || locatedCoords !== null);
 
@@ -484,7 +657,7 @@ export function QuickRoutePage() {
             </div>
             <button
               type="button"
-              onClick={() => setShowPaste((v) => !v)}
+              onClick={() => setShowBatch((v) => !v)}
               style={{
                 background: "transparent",
                 border: "none",
@@ -492,63 +665,46 @@ export function QuickRoutePage() {
                 fontWeight: 600,
                 fontSize: ".82rem",
                 cursor: "pointer",
-                padding: ".1rem .3rem",
+                padding: ".35rem .3rem",
+                minHeight: 44,
               }}
             >
-              {showPaste ? "Cancel paste" : "Paste list"}
+              {showBatch ? "Close batch entry" : "Paste / dictate"}
             </button>
           </div>
 
-          {/* Bulk paste panel */}
-          {showPaste && (
-            <div
-              style={{
-                marginBottom: "1rem",
-                padding: ".85rem",
-                background: "var(--hover-bg)",
-                borderRadius: "var(--radius)",
-                border: "1px solid var(--border)",
-              }}
-            >
-              <div style={{ fontSize: ".82rem", color: "var(--text-muted)", marginBottom: ".5rem" }}>
-                Paste addresses — one per line. Commas stay part of the address.
-              </div>
-              <textarea
-                value={pasteText}
-                onChange={(e) => setPasteText(e.target.value)}
-                placeholder={"2221 S Olive St, South Bend, IN 46614\n2107 S Mead St, South Bend, IN 46613"}
-                autoFocus
-                style={{
-                  width: "100%",
-                  minHeight: 100,
-                  fontFamily: "inherit",
-                  fontSize: ".875rem",
-                  padding: ".5rem .65rem",
-                  border: "1.5px solid var(--border)",
-                  borderRadius: "var(--radius)",
-                  background: "var(--input-bg)",
-                  color: "var(--text)",
-                  resize: "vertical",
-                  outline: "none",
-                }}
-              />
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={handlePasteImport}
-                disabled={pasteText.trim().length === 0}
-                style={{ marginTop: ".5rem" }}
-              >
-                Add to list
-              </button>
-            </div>
+          {showBatch && (
+            <BatchEntryPanel
+              transcript={transcript}
+              onTranscriptChange={setTranscript}
+              onAppendFinal={(text) => setTranscript((prev) => appendTranscript(prev, text))}
+              clearExisting={clearExisting}
+              onClearExistingChange={setClearExisting}
+              resolving={resolvingBatch}
+              onResolve={() => void handleResolveBatch()}
+              onCancel={() => setShowBatch(false)}
+              summary={batchSummary}
+              countError={batchCountError}
+              resolveError={batchResolveError}
+              filledStops={filledStops}
+              duplicates={duplicates}
+              verifiedExpanded={verifiedExpanded}
+              onVerifiedExpandedChange={setVerifiedExpanded}
+              onConfirmCandidate={handleConfirmCandidate}
+              onSearchEdit={handleSearchEdit}
+              onResolveAgain={(id) => void handleResolveAgain(id)}
+              resolvingStopId={resolvingStopId}
+              onKeepDuplicate={handleKeepDuplicate}
+              onRemoveDuplicate={handleRemoveDuplicate}
+            />
           )}
 
           {/* Individual stop inputs */}
           <div style={{ display: "flex", flexDirection: "column", gap: ".65rem" }}>
             {stops.map((stop, idx) => {
               const filled = stopIsFilled(stop);
-              const confirmable = confirmableCandidates(stop.reviewCandidates ?? [], stop.rawInput);
+              const confirmable = confirmableCandidates(stop.reviewCandidates ?? [], matchInputFor(stop));
+              const duplicate = duplicates.find((d) => d.stopId === stop.id);
               return (
                 <div key={stop.id}>
                   <div style={{ display: "flex", alignItems: "center", gap: ".5rem" }}>
@@ -640,11 +796,42 @@ export function QuickRoutePage() {
                           No matching South Bend 46613/46614 candidate yet. Edit the address or pick a suggestion.
                         </div>
                       )}
+                      <button
+                        type="button"
+                        className="batch-action-btn"
+                        onClick={() => void handleResolveAgain(stop.id)}
+                        disabled={resolvingStopId === stop.id}
+                      >
+                        {resolvingStopId === stop.id ? "Resolving…" : "Resolve again"}
+                      </button>
                     </div>
                   )}
                   {filled && stop.verificationStatus === "unresolved" && (
                     <div className="quick-route-review-hint" style={{ marginLeft: 34 }}>
-                      Could not resolve this address. Pick a suggestion or edit the text.
+                      {stop.unresolvedReason ?? "Could not resolve this address. Pick a suggestion or edit the text."}
+                      <div>
+                        <button
+                          type="button"
+                          className="batch-action-btn"
+                          onClick={() => void handleResolveAgain(stop.id)}
+                          disabled={resolvingStopId === stop.id}
+                        >
+                          {resolvingStopId === stop.id ? "Resolving…" : "Resolve again"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {filled && duplicate && (
+                    <div className="batch-duplicate" style={{ marginLeft: 34 }}>
+                      <span>{duplicate.reason}</span>
+                      <div className="batch-duplicate-actions">
+                        <button type="button" className="batch-action-btn" onClick={() => handleKeepDuplicate(stop.id)}>
+                          Keep both
+                        </button>
+                        <button type="button" className="batch-action-btn" onClick={() => handleRemoveDuplicate(stop.id)}>
+                          Remove duplicate
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -671,6 +858,7 @@ export function QuickRoutePage() {
               cursor: "pointer",
               width: "100%",
               justifyContent: "center",
+              minHeight: 44,
             }}
           >
             + Add stop
@@ -682,9 +870,15 @@ export function QuickRoutePage() {
           <div style={{ color: "#dc2626", fontSize: ".9rem", marginBottom: "1rem" }}>{error}</div>
         )}
 
+        {batchCountError && (
+          <p style={{ color: "#dc2626", fontSize: ".82rem", marginTop: ".75rem", marginBottom: ".5rem" }}>
+            {batchCountError}
+          </p>
+        )}
+
         {hasUnverifiedStops && filledStops.length > 0 && (
           <p className="text-muted" style={{ fontSize: ".82rem", marginTop: ".75rem", marginBottom: ".5rem" }}>
-            Verify every stop before generating a route.
+            Verify every stop before generating a route. Batch processing is not enough — unresolved and needs-review stops stay blocked.
           </p>
         )}
 
