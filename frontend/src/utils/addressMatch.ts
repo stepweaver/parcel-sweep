@@ -1,4 +1,4 @@
-import { QUICK_ROUTE_ZIP_SET } from "../config/quickRouteServiceArea";
+import { QUICK_ROUTE_SERVICE_AREA, QUICK_ROUTE_ZIP_SET } from "../config/quickRouteServiceArea";
 
 export type CardinalDirection = "E" | "W" | "N" | "S";
 
@@ -84,6 +84,16 @@ export function hasUsableGeometry(lat: number | undefined, lng: number | undefin
   if (lat === 0 && lng === 0) return false;
   if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return false;
   return true;
+}
+
+export function isWithinQuickRouteBounds(lat: number, lng: number): boolean {
+  const { bounds } = QUICK_ROUTE_SERVICE_AREA;
+  return (
+    lat >= bounds.minLat &&
+    lat <= bounds.maxLat &&
+    lng >= bounds.minLng &&
+    lng <= bounds.maxLng
+  );
 }
 
 export function streetPortion(displayName: string): string {

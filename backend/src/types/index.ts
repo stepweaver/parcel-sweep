@@ -4,6 +4,8 @@
 
 export type VerificationStatus = "unresolved" | "needs_review" | "verified";
 
+export type VerificationMethod = "provider" | "manual_pin";
+
 export type AddressConfidence =
   | "verified_rooftop"
   | "verified_parcel"
@@ -21,6 +23,9 @@ export interface StopInput {
   placeId?: string;
   confidence?: AddressConfidence;
   verificationStatus?: VerificationStatus;
+  verificationMethod?: VerificationMethod;
+  verificationProvider?: string;
+  manualVerifiedAt?: string;
 }
 
 export interface OptimizeRouteRequest {

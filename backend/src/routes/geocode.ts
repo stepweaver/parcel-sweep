@@ -1,12 +1,18 @@
 import { Router, Request, Response } from "express";
+import axios from "axios";
 import { searchAddressAutocomplete } from "../services/addressAutocomplete.js";
 import {
   BATCH_RESOLVE_MAX_ADDRESSES,
   resolveAddressBatch,
   type BatchResolveInput,
 } from "../services/batchResolve.js";
+import { hasUsableGeometry } from "../services/addressMatch.js";
 
 export const geocodeRouter = Router();
+
+const NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse";
+const NOMINATIM_USER_AGENT =
+  process.env.NOMINATIM_USER_AGENT ?? "parcel-sweep/1.0 (delivery route optimizer)";
 
 /**
  * GET /api/geocode/autocomplete?q=<query>
@@ -58,6 +64,36 @@ geocodeRouter.get(
     }
   }
 );
+
+/**
+ * GET /api/geocode/reverse?lat=&lng=
+ *
+ * Informational reverse-geocode label for manual map pins.
+ * Never used to rename a stop's delivery address.
+ */
+geocodeRouter.get("/reverse", async (req: Request, res: Response): Promise<void> => {
+  const lat = parseFloat(String(req.query.lat ?? ""));
+  const lng = parseFloat(String(req.query.lng ?? ""));
+  if (!hasUsableGeometry(lat, lng)) {
+    res.status(400).json({ error: "lat and lng are required." });
+    return;
+  }
+  try {
+    const response = await axios.get<{ display_name?: string }>(NOMINATIM_REVERSE_URL, {
+      params: { lat, lon: lng, format: "json", zoom: 18, addressdetails: 0 },
+      headers: { "User-Agent": NOMINATIM_USER_AGENT },
+      timeout: 4000,
+    });
+    const label = typeof response.data?.display_name === "string" ? response.data.display_name : "";
+    res.json({ label });
+  } catch (err) {
+    console.warn(
+      "[geocode] reverse lookup failed:",
+      err instanceof Error ? err.message : err
+    );
+    res.json({ label: "" });
+  }
+});
 
 /**
  * POST /api/geocode/resolve-batch

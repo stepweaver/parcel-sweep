@@ -97,4 +97,111 @@ describe("prepareOptimizePoints", () => {
     if (result.ok) return;
     assert.equal(result.status, 422);
   });
+
+  it("E. accepts a manually verified stop without placeId and does not geocode it", async () => {
+    let geocodeCalls = 0;
+    const result = await prepareOptimizePoints(
+      {
+        startAddress: "4015 S Main St, South Bend, IN 46614",
+        startCoords: { lat: 41.652, lng: -86.2511 },
+        stops: [
+          {
+            address: "1818 South Jackson St",
+            rawInput: "1818 South Jackson St",
+            lat: 41.66,
+            lng: -86.25,
+            verificationStatus: "verified",
+            verificationMethod: "manual_pin",
+            manualVerifiedAt: "2026-08-29T12:00:00.000Z",
+          },
+        ],
+      },
+      async (address) => {
+        geocodeCalls += 1;
+        return { address, packageCount: 0, lat: 41.65, lng: -86.25 };
+      }
+    );
+    assert.equal(result.ok, true);
+    assert.equal(geocodeCalls, 0);
+    if (!result.ok) return;
+    assert.equal(result.stops[0].lat, 41.66);
+    assert.equal(result.stops[0].address, "1818 South Jackson St");
+  });
+
+  it("J. accepts provider verified and manually verified stops together", async () => {
+    const result = await prepareOptimizePoints(
+      {
+        startAddress: "4015 S Main St, South Bend, IN 46614",
+        startCoords: { lat: 41.652, lng: -86.2511 },
+        stops: [
+          SB_STOP,
+          {
+            address: "1616 Philippa St",
+            rawInput: "1616 Philippa St",
+            lat: 41.665,
+            lng: -86.24,
+            verificationStatus: "verified",
+            verificationMethod: "manual_pin",
+          },
+        ],
+      },
+      async () => {
+        throw new Error("geocoder should not be called");
+      }
+    );
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.stops.length, 2);
+  });
+
+  it("F. rejects manual coordinates outside the service area with 422", async () => {
+    const result = await prepareOptimizePoints(
+      {
+        startAddress: "4015 S Main St, South Bend, IN 46614",
+        startCoords: { lat: 41.652, lng: -86.2511 },
+        stops: [
+          {
+            address: "1616 Philippa St",
+            rawInput: "1616 Philippa St",
+            lat: 41.08,
+            lng: -85.14,
+            verificationStatus: "verified",
+            verificationMethod: "manual_pin",
+          },
+        ],
+      },
+      async () => {
+        throw new Error("geocoder should not be called");
+      }
+    );
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.equal(result.status, 422);
+  });
+
+  it("K. still blocks any remaining unresolved stop even when others are manually verified", async () => {
+    const result = await prepareOptimizePoints(
+      {
+        startAddress: "4015 S Main St, South Bend, IN 46614",
+        startCoords: { lat: 41.652, lng: -86.2511 },
+        stops: [
+          {
+            address: "1818 South Jackson St",
+            rawInput: "1818 South Jackson St",
+            lat: 41.66,
+            lng: -86.25,
+            verificationStatus: "verified",
+            verificationMethod: "manual_pin",
+          },
+          { address: "1917 South Jackson St", verificationStatus: "unresolved" },
+        ],
+      },
+      async () => {
+        throw new Error("geocoder should not be called");
+      }
+    );
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.equal(result.status, 422);
+  });
 });

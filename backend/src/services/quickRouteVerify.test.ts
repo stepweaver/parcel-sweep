@@ -135,6 +135,26 @@ describe("applyStopTextEdit", () => {
     assert.equal(edited.placeId, undefined);
     assert.equal(edited.confidence, undefined);
   });
+
+  it("G. changing address text clears manual verification", () => {
+    const edited = applyStopTextEdit(
+      {
+        id: "1",
+        rawInput: "1818 South Jackson St",
+        address: "1818 South Jackson St",
+        lat: 41.66,
+        lng: -86.25,
+        verificationStatus: "verified",
+        verificationMethod: "manual_pin",
+        manualVerifiedAt: "2026-08-29T12:00:00.000Z",
+      },
+      "1818 South Jackson Street"
+    );
+    assert.equal(edited.verificationStatus, "unresolved");
+    assert.equal(edited.verificationMethod, undefined);
+    assert.equal(edited.lat, undefined);
+    assert.equal(edited.lng, undefined);
+  });
 });
 
 describe("legacy stop migration", () => {
@@ -177,6 +197,42 @@ describe("validateVerifiedStopCoords", () => {
       lng: -85.14,
       placeId: "place-1",
       verificationStatus: "verified",
+    });
+    assert.equal(result.ok, false);
+  });
+
+  it("accepts a manual pin without placeId", () => {
+    const result = validateVerifiedStopCoords({
+      address: "1818 South Jackson St",
+      rawInput: "1818 South Jackson St",
+      lat: 41.66,
+      lng: -86.25,
+      verificationStatus: "verified",
+      verificationMethod: "manual_pin",
+    });
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.stop.verificationMethod, "manual_pin");
+    assert.equal(result.stop.placeId, undefined);
+  });
+
+  it("rejects a manual pin that is missing the original address", () => {
+    const result = validateVerifiedStopCoords({
+      lat: 41.66,
+      lng: -86.25,
+      verificationStatus: "verified",
+      verificationMethod: "manual_pin",
+    });
+    assert.equal(result.ok, false);
+  });
+
+  it("still requires placeId for provider-verified stops", () => {
+    const result = validateVerifiedStopCoords({
+      address: "1918 West Indiana Avenue, South Bend, IN 46614",
+      lat: 41.652,
+      lng: -86.251,
+      verificationStatus: "verified",
+      verificationMethod: "provider",
     });
     assert.equal(result.ok, false);
   });

@@ -9,6 +9,7 @@ import { Server as SocketServer } from "socket.io";
 
 import { getDb } from "./db/index.js";
 import { isGoogleGeocodingConfigured } from "./services/geocoder.js";
+import { isGoogleAddressValidationCassEnabled, isGoogleAddressValidationConfigured } from "./services/googleAddressValidation.js";
 import { optimizeRouteRouter } from "./routes/optimizeRoute.js";
 import { manifestsRouter } from "./routes/manifests.js";
 import { createRoutesRouter } from "./routes/routes.js";
@@ -76,6 +77,8 @@ app.get("/health", (_req, res) => {
       ?? "local",
     config: {
       googleGeocoding: isGoogleGeocodingConfigured(),
+      googleAddressValidation: isGoogleAddressValidationConfigured(),
+      googleAddressValidationCass: isGoogleAddressValidationCassEnabled(),
       geocodingFallback: "nominatim",
       osrm: process.env.OSRM_BASE_URL ?? "http://router.project-osrm.org",
     },

@@ -34,6 +34,43 @@ export function summarizeVerificationCounts(
   };
 }
 
+export function summarizeRouteReadiness(stops: Array<{
+  verificationStatus: VerificationStatus;
+  verificationMethod?: "provider" | "manual_pin";
+}>): {
+  total: number;
+  providerVerified: number;
+  manuallyVerified: number;
+  needsReview: number;
+  unresolved: number;
+  accountedFor: number;
+  ok: boolean;
+  attentionCount: number;
+  readyToRoute: boolean;
+} {
+  const providerVerified = stops.filter(
+    (s) => s.verificationStatus === "verified" && s.verificationMethod !== "manual_pin"
+  ).length;
+  const manuallyVerified = stops.filter(
+    (s) => s.verificationStatus === "verified" && s.verificationMethod === "manual_pin"
+  ).length;
+  const needsReview = stops.filter((s) => s.verificationStatus === "needs_review").length;
+  const unresolved = stops.filter((s) => s.verificationStatus === "unresolved").length;
+  const accountedFor = providerVerified + manuallyVerified + needsReview + unresolved;
+  const attentionCount = needsReview + unresolved;
+  return {
+    total: stops.length,
+    providerVerified,
+    manuallyVerified,
+    needsReview,
+    unresolved,
+    accountedFor,
+    ok: accountedFor === stops.length,
+    attentionCount,
+    readyToRoute: stops.length > 0 && attentionCount === 0,
+  };
+}
+
 export function routeBlockedByVerification(
   filledStatuses: readonly VerificationStatus[]
 ): boolean {

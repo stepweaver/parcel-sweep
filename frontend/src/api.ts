@@ -258,6 +258,9 @@ export interface OpsDashboardResponse {
   }>;
 }
 
+export type VerificationStatus = "unresolved" | "needs_review" | "verified";
+export type VerificationMethod = "provider" | "manual_pin";
+
 export interface QuickRouteStopInput {
   address: string;
   rawInput?: string;
@@ -265,7 +268,10 @@ export interface QuickRouteStopInput {
   lng?: number;
   placeId?: string;
   confidence?: string;
-  verificationStatus?: "unresolved" | "needs_review" | "verified";
+  verificationStatus?: VerificationStatus;
+  verificationMethod?: VerificationMethod;
+  verificationProvider?: string;
+  manualVerifiedAt?: string;
 }
 
 export interface BatchResolveRequestEntry {
@@ -303,6 +309,13 @@ export interface BatchResolveResult {
   candidate?: BatchResolveCandidate;
   candidates?: BatchResolveCandidate[];
   reason?: string;
+  verificationMethod?: "provider" | "manual_pin";
+  verificationProvider?: string;
+  suggestedCorrection?: {
+    explanation: string;
+    changedComponents: string[];
+    candidate: BatchResolveCandidate;
+  };
 }
 
 export interface BatchCountSummary {
@@ -574,5 +587,7 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ addresses }),
       }),
+    reverse: (lat: number, lng: number) =>
+      apiFetch<{ label: string }>(`/api/geocode/reverse?lat=${encodeURIComponent(String(lat))}&lng=${encodeURIComponent(String(lng))}`),
   },
 };

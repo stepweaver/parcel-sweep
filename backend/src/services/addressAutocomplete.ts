@@ -121,6 +121,11 @@ export function getCachedPlaceGeometry(placeId: string): { lat: number; lng: num
   return geometryCache.get(placeId);
 }
 
+export function rememberPlaceGeometry(placeId: string, coords: { lat: number; lng: number }): void {
+  if (!placeId.trim()) return;
+  geometryCache.set(placeId, coords);
+}
+
 function normalizeState(state: string | undefined): string {
   if (!state) return "";
   if (state === "Indiana" || state === "IN") return "IN";

@@ -175,6 +175,8 @@ Copy `backend/.env.example` to `backend/.env.local` for local development.
 | `PORT` | No | `3000` | HTTP server port |
 | `FRONTEND_ORIGIN` | No | `http://localhost:5173` | CORS and Socket.io allowed origin |
 | `GOOGLE_GEOCODING_API_KEY` | No | — | Improves depot geocoding; without it, Nominatim is used |
+| `GOOGLE_ADDRESS_VALIDATION_API_KEY` | No | — | Server-only Address Validation API for Quick Route coverage. App starts without it. |
+| `GOOGLE_ADDRESS_VALIDATION_ENABLE_CASS` | No | `false` | Set `true` to request USPS CASS processing. Not required. |
 | `OSRM_BASE_URL` | No | `http://router.project-osrm.org` | OSRM server for drive matrices |
 | `DB_PATH` | No | `./parcel-sweep.db` | SQLite database file path |
 

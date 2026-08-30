@@ -167,6 +167,91 @@ describe("batch concurrency", () => {
   });
 });
 
+describe("Google Address Validation is a fallback, not a free-for-all", () => {
+  it("does not call Google when the local provider already verified", async () => {
+    let googleCalls = 0;
+    const search: AddressSearchFn = async () => [oliveVerified];
+    const googleValidate = async () => {
+      googleCalls += 1;
+      throw new Error("Google should not be called");
+    };
+    const result = await resolveOneAddress(
+      { id: "olive", rawInput: "2221 South Olive St", searchInput: "2221 South Olive St" },
+      search,
+      googleValidate
+    );
+    assert.equal(result.status, "verified");
+    assert.equal(googleCalls, 0);
+    assert.equal(result.verificationProvider, undefined);
+  });
+
+  it("J. Google unavailable keeps the original row unresolved and does not drop it", async () => {
+    const search: AddressSearchFn = async () => [];
+    const googleValidate = async () => {
+      throw new Error("Address Validation API unavailable");
+    };
+    const { results, count } = await resolveAddressBatch(
+      [
+        { id: "mead", rawInput: "2107 South Mead St", searchInput: "2107 South Mead St" },
+        { id: "philippa", rawInput: "1616 Philippa St", searchInput: "1616 Philippa St" },
+      ],
+      { search, googleValidate }
+    );
+    assert.equal(results.length, 2);
+    assert.equal(results[0].id, "mead");
+    assert.equal(results[1].id, "philippa");
+    assert.equal(results[0].status, "unresolved");
+    assert.equal(results[1].status, "unresolved");
+    assert.equal(count.ok, true);
+    assert.equal(count.accountedFor, 2);
+  });
+
+  it("uses Google when local providers cannot verify", async () => {
+    const search: AddressSearchFn = async () => [];
+    const googleValidate = async () => ({
+      status: "verified" as const,
+      candidate: {
+        placeId: "ChIJ-mead",
+        displayName: "2107 South Mead Street, South Bend, IN 46613, USA",
+        lat: 41.66,
+        lng: -86.24,
+        confidence: "verified_parcel" as const,
+        city: "South Bend",
+        state: "IN",
+        zip: "46613",
+        houseNumber: "2107",
+        street: "South Mead Street",
+      },
+      meta: {
+        addressComplete: true,
+        validationGranularity: "PREMISE",
+        geocodeGranularity: "PREMISE",
+        hasUnconfirmedComponents: false,
+        hasInferredComponents: true,
+        hasReplacedComponents: false,
+        geometryOk: true,
+        materialStreetOrHouseChange: false,
+        unconfirmedStreetOrHouse: false,
+        inServiceArea: true,
+        changedComponents: [],
+        lat: 41.66,
+        lng: -86.24,
+        placeId: "ChIJ-mead",
+      },
+    });
+    const result = await resolveOneAddress(
+      { id: "mead", rawInput: "2107 South Mead St", searchInput: "2107 South Mead St" },
+      search,
+      googleValidate
+    );
+    assert.equal(result.status, "verified");
+    assert.equal(result.verificationMethod, "provider");
+    assert.equal(result.verificationProvider, "google_address_validation");
+    assert.equal(result.candidate?.placeId, "ChIJ-mead");
+    assert.equal(result.id, "mead");
+  });
+});
+
 describe("batch-created verified stop bypasses optimization geocoder (N)", () => {
   it("uses locked coordinates from a batch-verified stop", async () => {
     let geocodeCalls = 0;

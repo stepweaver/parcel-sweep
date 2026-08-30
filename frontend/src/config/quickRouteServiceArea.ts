@@ -4,6 +4,12 @@ export const QUICK_ROUTE_SERVICE_AREA = {
   state: "IN",
   zipCodes: ["46613", "46614"] as const,
   center: { lat: 41.6555, lng: -86.2505 },
+  bounds: {
+    minLat: 41.615,
+    maxLat: 41.688,
+    minLng: -86.305,
+    maxLng: -86.205,
+  },
 } as const;
 
 export const QUICK_ROUTE_ZIP_SET: ReadonlySet<string> = new Set(

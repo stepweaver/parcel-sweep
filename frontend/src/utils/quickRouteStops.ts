@@ -1,4 +1,5 @@
 import type { AddressConfidence, AddressSuggestion } from "../components/AddressAutocomplete";
+import { QUICK_ROUTE_SERVICE_AREA } from "../config/quickRouteServiceArea";
 import {
   extractCityStateZip,
   extractHouseNumberFromStreetLine,
@@ -14,6 +15,15 @@ import type { SegmentedAddress } from "./addressSegmenter";
 import { parsePastedAddresses as segmentPastedAddresses } from "./addressSegmenter";
 
 export type VerificationStatus = "unresolved" | "needs_review" | "verified";
+export type VerificationMethod = "provider" | "manual_pin";
+
+export const GOOGLE_ADDRESS_VALIDATION_PROVIDER = "google_address_validation";
+
+export interface SuggestedCorrection {
+  explanation: string;
+  changedComponents: string[];
+  candidate: AddressSuggestion;
+}
 
 export interface QuickRouteStop {
   id: string;
@@ -25,9 +35,14 @@ export interface QuickRouteStop {
   placeId?: string;
   confidence?: AddressConfidence;
   verificationStatus: VerificationStatus;
+  verificationMethod?: VerificationMethod;
+  verificationProvider?: string;
   reviewCandidates?: AddressSuggestion[];
+  suggestedCorrection?: SuggestedCorrection;
   unresolvedReason?: string;
   duplicateKept?: boolean;
+  manualVerifiedAt?: string;
+  manualReverseGeocodeLabel?: string;
 }
 
 const STRONG_CONFIDENCE: ReadonlySet<AddressConfidence> = new Set([
@@ -97,6 +112,17 @@ export function migrateQuickRouteStop(raw: unknown): QuickRouteStop | null {
   const placeId = typeof raw.placeId === "string" ? raw.placeId : undefined;
   const confidence = isAddressConfidence(raw.confidence) ? raw.confidence : undefined;
   const duplicateKept = raw.duplicateKept === true;
+  const verificationMethod: VerificationMethod | undefined =
+    raw.verificationMethod === "manual_pin" || raw.verificationMethod === "provider"
+      ? raw.verificationMethod
+      : verificationStatus === "verified"
+        ? "provider"
+        : undefined;
+  const verificationProvider =
+    typeof raw.verificationProvider === "string" ? raw.verificationProvider : undefined;
+  const manualVerifiedAt = typeof raw.manualVerifiedAt === "string" ? raw.manualVerifiedAt : undefined;
+  const manualReverseGeocodeLabel =
+    typeof raw.manualReverseGeocodeLabel === "string" ? raw.manualReverseGeocodeLabel : undefined;
 
   // Never keep a stop verified without usable coordinates.
   if (verificationStatus === "verified" && !hasUsableGeometry(lat, lng)) {
@@ -110,6 +136,21 @@ export function migrateQuickRouteStop(raw: unknown): QuickRouteStop | null {
   }
 
   if (verificationStatus === "verified") {
+    if (verificationMethod === "manual_pin") {
+      return {
+        id: raw.id,
+        rawInput,
+        searchInput,
+        address,
+        lat,
+        lng,
+        verificationStatus: "verified",
+        verificationMethod: "manual_pin",
+        manualVerifiedAt,
+        manualReverseGeocodeLabel,
+        duplicateKept,
+      };
+    }
     return {
       id: raw.id,
       rawInput,
@@ -120,6 +161,8 @@ export function migrateQuickRouteStop(raw: unknown): QuickRouteStop | null {
       placeId,
       confidence,
       verificationStatus: "verified",
+      verificationMethod: "provider",
+      verificationProvider,
       duplicateKept,
     };
   }
@@ -203,10 +246,16 @@ export function applyStopTextEdit(stop: QuickRouteStop, text: string): QuickRout
     verificationStatus: "unresolved",
     unresolvedReason: undefined,
     reviewCandidates: undefined,
+    suggestedCorrection: undefined,
     lat: undefined,
     lng: undefined,
     placeId: undefined,
     confidence: undefined,
+    verificationMethod: undefined,
+    verificationProvider: undefined,
+    manualVerifiedAt: undefined,
+    manualReverseGeocodeLabel: undefined,
+    duplicateKept: stop.duplicateKept,
   };
 }
 
@@ -221,8 +270,13 @@ export function applyStopSearchEdit(stop: QuickRouteStop, text: string): QuickRo
     placeId: undefined,
     confidence: undefined,
     verificationStatus: "unresolved",
+    verificationMethod: undefined,
+    verificationProvider: undefined,
     unresolvedReason: undefined,
     reviewCandidates: undefined,
+    suggestedCorrection: undefined,
+    manualVerifiedAt: undefined,
+    manualReverseGeocodeLabel: undefined,
   };
 }
 
@@ -251,11 +305,17 @@ export function applyStopSuggestion(
     placeId: suggestion.placeId,
     confidence: suggestion.confidence,
     verificationStatus,
+    verificationMethod: verificationStatus === "verified" ? "provider" : undefined,
+    verificationProvider:
+      verificationStatus === "verified" ? stop.verificationProvider : undefined,
     unresolvedReason: verificationStatus === "unresolved" ? undefined : stop.unresolvedReason,
+    suggestedCorrection: verificationStatus === "needs_review" ? stop.suggestedCorrection : undefined,
     reviewCandidates:
       verificationStatus === "needs_review"
         ? validReviewCandidates(stop.reviewCandidates, suggestion)
         : undefined,
+    manualVerifiedAt: undefined,
+    manualReverseGeocodeLabel: undefined,
   };
 }
 
@@ -267,6 +327,9 @@ export interface BatchEntryResult {
   candidate?: AddressSuggestion;
   candidates?: AddressSuggestion[];
   reason?: string;
+  verificationMethod?: VerificationMethod;
+  verificationProvider?: string;
+  suggestedCorrection?: SuggestedCorrection;
 }
 
 /**
@@ -308,11 +371,18 @@ export function applyResolvedBatchEntry(stop: QuickRouteStop, result: BatchEntry
       lng: geometryOk && (verificationStatus === "verified" || evaluation.canConfirm)
         ? result.candidate.lng
         : undefined,
-      placeId: result.candidate.placeId,
+      placeId: result.candidate.placeId || undefined,
       confidence: result.candidate.confidence,
       verificationStatus,
+      verificationMethod: verificationStatus === "verified" ? (result.verificationMethod ?? "provider") : undefined,
+      verificationProvider:
+        verificationStatus === "verified" ? result.verificationProvider : undefined,
       reviewCandidates: verificationStatus === "needs_review" ? confirmable : undefined,
+      suggestedCorrection:
+        verificationStatus === "needs_review" ? result.suggestedCorrection : undefined,
       unresolvedReason: verificationStatus === "unresolved" ? result.reason : undefined,
+      manualVerifiedAt: undefined,
+      manualReverseGeocodeLabel: undefined,
     };
   }
 
@@ -326,9 +396,14 @@ export function applyResolvedBatchEntry(stop: QuickRouteStop, result: BatchEntry
     lng: undefined,
     placeId: undefined,
     confidence: undefined,
-    verificationStatus: "unresolved",
+    verificationStatus: result.suggestedCorrection ? "needs_review" : "unresolved",
+    verificationMethod: undefined,
+    verificationProvider: undefined,
     reviewCandidates: undefined,
-    unresolvedReason: result.reason ?? "No confident match",
+    suggestedCorrection: result.suggestedCorrection,
+    unresolvedReason: result.suggestedCorrection ? undefined : (result.reason ?? "No confident match"),
+    manualVerifiedAt: undefined,
+    manualReverseGeocodeLabel: undefined,
   };
 }
 
@@ -340,7 +415,7 @@ function validReviewCandidates(
   const seen = new Set<string>();
   const out: AddressSuggestion[] = [];
   for (const s of [selected, ...list]) {
-    if (seen.has(s.placeId)) continue;
+    if (!s.placeId || seen.has(s.placeId)) continue;
     seen.add(s.placeId);
     out.push(s);
   }
@@ -367,4 +442,158 @@ export function stopBlocksRoute(stop: QuickRouteStop): boolean {
 
 export function confirmableCandidates(candidates: AddressSuggestion[], rawInput: string): AddressSuggestion[] {
   return candidates.filter((s) => evaluateAddressSuggestion(rawInput, s).canConfirm);
+}
+
+/**
+ * User explicitly accepted a Google (or other) correction. Re-run Phase 1
+ * against the accepted street line, not the original mismatched input.
+ */
+export function applySuggestedCorrection(
+  stop: QuickRouteStop,
+  correction: SuggestedCorrection
+): QuickRouteStop {
+  const streetLine =
+    [correction.candidate.houseNumber, correction.candidate.street].filter(Boolean).join(" ") ||
+    streetPortion(correction.candidate.displayName);
+  const next = applyStopSuggestion(stop, correction.candidate, stop.rawInput, {
+    userConfirmed: true,
+    matchInput: streetLine,
+  });
+  return {
+    ...next,
+    searchInput: streetLine,
+    verificationProvider:
+      next.verificationStatus === "verified"
+        ? stop.verificationProvider ?? GOOGLE_ADDRESS_VALIDATION_PROVIDER
+        : undefined,
+    suggestedCorrection: next.verificationStatus === "needs_review" ? correction : undefined,
+  };
+}
+
+export function stopAllowsManualPin(stop: QuickRouteStop): boolean {
+  if (!stopIsFilled(stop)) return false;
+  return stop.verificationStatus === "unresolved" || stop.verificationStatus === "needs_review";
+}
+
+export function stopAllowsAdjustPin(stop: QuickRouteStop): boolean {
+  return stop.verificationStatus === "verified" && stop.verificationMethod === "manual_pin";
+}
+
+export interface ManualPinDraft {
+  stopId: string;
+  lat?: number;
+  lng?: number;
+}
+
+export function applyManualPinMapClick(
+  draft: ManualPinDraft,
+  lat: number,
+  lng: number
+): ManualPinDraft {
+  return { stopId: draft.stopId, lat, lng };
+}
+
+export function confirmManualPin(
+  stop: QuickRouteStop,
+  draft: ManualPinDraft,
+  options?: { reverseLabel?: string; at?: string }
+): QuickRouteStop {
+  if (draft.stopId !== stop.id) return stop;
+  if (!hasUsableGeometry(draft.lat, draft.lng)) return stop;
+  return {
+    ...stop,
+    address: stop.searchInput?.trim() || stop.address.trim() || stop.rawInput.trim(),
+    lat: draft.lat,
+    lng: draft.lng,
+    placeId: undefined,
+    confidence: undefined,
+    verificationStatus: "verified",
+    verificationMethod: "manual_pin",
+    verificationProvider: undefined,
+    manualVerifiedAt: options?.at ?? new Date().toISOString(),
+    manualReverseGeocodeLabel: options?.reverseLabel,
+    unresolvedReason: undefined,
+    reviewCandidates: undefined,
+    suggestedCorrection: undefined,
+  };
+}
+
+export function adjustManualPin(
+  stop: QuickRouteStop,
+  lat: number,
+  lng: number,
+  options?: { reverseLabel?: string; at?: string }
+): QuickRouteStop {
+  if (stop.verificationMethod !== "manual_pin") return stop;
+  if (!hasUsableGeometry(lat, lng)) return stop;
+  return {
+    ...stop,
+    id: stop.id,
+    lat,
+    lng,
+    manualVerifiedAt: options?.at ?? new Date().toISOString(),
+    manualReverseGeocodeLabel: options?.reverseLabel ?? stop.manualReverseGeocodeLabel,
+  };
+}
+
+export function streetSafeCandidateCenter(
+  stop: QuickRouteStop
+): { lat: number; lng: number } | undefined {
+  const matchInput = matchInputFor(stop);
+  for (const candidate of stop.reviewCandidates ?? []) {
+    if (!hasUsableGeometry(candidate.lat, candidate.lng)) continue;
+    const streetLine = candidate.street
+      ? [candidate.houseNumber, candidate.street].filter(Boolean).join(" ")
+      : streetPortion(candidate.displayName);
+    if (requestedStreetMatchesCandidate(matchInput, streetLine)) {
+      return { lat: candidate.lat as number, lng: candidate.lng as number };
+    }
+  }
+  if (
+    stop.suggestedCorrection &&
+    hasUsableGeometry(stop.suggestedCorrection.candidate.lat, stop.suggestedCorrection.candidate.lng)
+  ) {
+    const c = stop.suggestedCorrection.candidate;
+    const streetLine = c.street
+      ? [c.houseNumber, c.street].filter(Boolean).join(" ")
+      : streetPortion(c.displayName);
+    if (requestedStreetMatchesCandidate(matchInput, streetLine)) {
+      return { lat: c.lat as number, lng: c.lng as number };
+    }
+  }
+  return undefined;
+}
+
+export function manualPinMapCenter(
+  stop: QuickRouteStop,
+  otherStops: QuickRouteStop[]
+): { lat: number; lng: number; zoom: number } {
+  const streetSafe = streetSafeCandidateCenter(stop);
+  if (streetSafe) return { ...streetSafe, zoom: 18 };
+
+  const verified = otherStops.filter(
+    (s) =>
+      s.id !== stop.id &&
+      s.verificationStatus === "verified" &&
+      hasUsableGeometry(s.lat, s.lng)
+  );
+  if (verified.length > 0) {
+    const lat = verified.reduce((sum, s) => sum + (s.lat as number), 0) / verified.length;
+    const lng = verified.reduce((sum, s) => sum + (s.lng as number), 0) / verified.length;
+    return { lat, lng, zoom: 15 };
+  }
+
+  return { ...QUICK_ROUTE_SERVICE_AREA.center, zoom: 14 };
+}
+
+export function verificationSourceCopy(stop: QuickRouteStop): { title: string; detail?: string } {
+  if (stop.verificationStatus === "needs_review") return { title: "Needs review" };
+  if (stop.verificationStatus !== "verified") return { title: "Unresolved" };
+  if (stop.verificationMethod === "manual_pin") {
+    return { title: "✓ Manually verified", detail: "Location selected on map" };
+  }
+  if (stop.verificationProvider === GOOGLE_ADDRESS_VALIDATION_PROVIDER) {
+    return { title: "✓ Verified", detail: "Google Address Validation" };
+  }
+  return { title: "✓ Verified" };
 }

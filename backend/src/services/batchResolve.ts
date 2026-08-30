@@ -1,6 +1,17 @@
 import type { AutocompleteSuggestion } from "./addressAutocomplete.js";
-import { searchAddressAutocomplete } from "./addressAutocomplete.js";
-import { evaluateAddressSuggestion, type VerificationStatus } from "./quickRouteVerify.js";
+import { rememberPlaceGeometry, searchAddressAutocomplete } from "./addressAutocomplete.js";
+import {
+  GOOGLE_ADDRESS_VALIDATION_PROVIDER,
+  isGoogleAddressValidationConfigured,
+  validateQuickRouteAddress,
+} from "./googleAddressValidation.js";
+import type { GoogleValidationDecision, SuggestedCorrection } from "./googleAddressValidationAdapter.js";
+import {
+  evaluateAddressSuggestion,
+  type SuggestionLike,
+  type VerificationMethod,
+  type VerificationStatus,
+} from "./quickRouteVerify.js";
 import { summarizeVerificationCounts } from "./batchAccounting.js";
 
 export const BATCH_RESOLVE_CONCURRENCY = 4;
@@ -28,6 +39,12 @@ export interface BatchResolveCandidate {
   street?: string;
 }
 
+export interface BatchSuggestedCorrection {
+  explanation: string;
+  changedComponents: string[];
+  candidate: BatchResolveCandidate;
+}
+
 export interface BatchResolveResult {
   id: string;
   rawInput: string;
@@ -36,6 +53,9 @@ export interface BatchResolveResult {
   candidate?: BatchResolveCandidate;
   candidates?: BatchResolveCandidate[];
   reason?: string;
+  verificationMethod?: VerificationMethod;
+  verificationProvider?: string;
+  suggestedCorrection?: BatchSuggestedCorrection;
 }
 
 export type AddressSearchFn = (opts: {
@@ -44,6 +64,8 @@ export type AddressSearchFn = (opts: {
   serviceAreaOnly?: boolean;
   near?: { lat: number; lng: number };
 }) => Promise<AutocompleteSuggestion[]>;
+
+export type GoogleValidateFn = (input: string) => Promise<GoogleValidationDecision | null>;
 
 async function mapPool<T, R>(
   items: T[],
@@ -66,21 +88,50 @@ async function mapPool<T, R>(
   return results;
 }
 
-function serializeCandidate(s: AutocompleteSuggestion): BatchResolveCandidate {
+function serializeCandidate(s: AutocompleteSuggestion | SuggestionLike): BatchResolveCandidate {
   return {
     placeId: s.placeId,
     displayName: s.displayName,
     lat: s.lat,
     lng: s.lng,
     confidence: s.confidence,
-    rankReason: s.rankReason,
-    distanceMeters: s.distanceMeters,
+    rankReason: "rankReason" in s && typeof s.rankReason === "string" ? s.rankReason : "Suggested match",
+    distanceMeters: "distanceMeters" in s ? s.distanceMeters : undefined,
     city: s.city,
     state: s.state,
     zip: s.zip,
     houseNumber: s.houseNumber,
     street: s.street,
   };
+}
+
+function serializeSuggestedCorrection(
+  correction: SuggestedCorrection
+): BatchSuggestedCorrection {
+  return {
+    explanation: correction.explanation,
+    changedComponents: correction.changedComponents,
+    candidate: serializeCandidate(correction.candidate),
+  };
+}
+
+function seedGoogleGeometry(decision: GoogleValidationDecision): void {
+  if (
+    decision.candidate?.placeId &&
+    decision.meta.geometryOk &&
+    decision.meta.lat !== undefined &&
+    decision.meta.lng !== undefined
+  ) {
+    rememberPlaceGeometry(decision.candidate.placeId, {
+      lat: decision.meta.lat,
+      lng: decision.meta.lng,
+    });
+  }
+}
+
+async function productionGoogleValidate(input: string): Promise<GoogleValidationDecision | null> {
+  if (!isGoogleAddressValidationConfigured()) return null;
+  return validateQuickRouteAddress(input);
 }
 
 function logBatchRow(result: BatchResolveResult, candidateCount: number): void {
@@ -94,17 +145,119 @@ function logBatchRow(result: BatchResolveResult, candidateCount: number): void {
   });
 }
 
+function localResultFromSuggestions(
+  base: { id: string; rawInput: string; normalizedInput: string },
+  matchInput: string,
+  suggestions: AutocompleteSuggestion[]
+): BatchResolveResult {
+  if (!suggestions.length) {
+    return {
+      ...base,
+      status: "unresolved",
+      reason: "No confident match",
+      candidates: [],
+    };
+  }
+
+  const evaluated = suggestions.map((suggestion) => ({
+    suggestion,
+    evaluation: evaluateAddressSuggestion(matchInput, suggestion),
+  }));
+  const confirmable = evaluated.filter((e) => e.evaluation.canConfirm);
+
+  if (evaluated[0].evaluation.verificationStatus === "verified") {
+    return {
+      ...base,
+      status: "verified",
+      candidate: serializeCandidate(evaluated[0].suggestion),
+      candidates: confirmable.map((e) => serializeCandidate(e.suggestion)),
+      verificationMethod: "provider",
+    };
+  }
+
+  if (confirmable.length > 0) {
+    return {
+      ...base,
+      status: "needs_review",
+      candidate: serializeCandidate(confirmable[0].suggestion),
+      candidates: confirmable.map((e) => serializeCandidate(e.suggestion)),
+      reason: evaluated[0].evaluation.reasons[0] ?? "Needs confirmation",
+    };
+  }
+
+  return {
+    ...base,
+    status: "unresolved",
+    reason: evaluated[0].evaluation.reasons[0] ?? "No confident match",
+    candidates: [],
+  };
+}
+
+function googleResult(
+  base: { id: string; rawInput: string; normalizedInput: string },
+  decision: GoogleValidationDecision
+): BatchResolveResult {
+  seedGoogleGeometry(decision);
+  const candidate = decision.candidate ? serializeCandidate({
+    ...decision.candidate,
+    rankReason: "Google Address Validation",
+  } as AutocompleteSuggestion) : undefined;
+
+  if (decision.status === "verified" && candidate?.placeId) {
+    return {
+      ...base,
+      status: "verified",
+      candidate,
+      candidates: [candidate],
+      verificationMethod: "provider",
+      verificationProvider: GOOGLE_ADDRESS_VALIDATION_PROVIDER,
+    };
+  }
+
+  if (decision.status === "needs_review") {
+    return {
+      ...base,
+      status: "needs_review",
+      candidate,
+      candidates: candidate?.placeId ? [candidate] : [],
+      reason: decision.reason,
+      suggestedCorrection: decision.suggestedCorrection
+        ? serializeSuggestedCorrection(decision.suggestedCorrection)
+        : undefined,
+      verificationProvider: GOOGLE_ADDRESS_VALIDATION_PROVIDER,
+    };
+  }
+
+  return {
+    ...base,
+    status: "unresolved",
+    candidate,
+    candidates: [],
+    reason: decision.reason ?? "No confident match",
+    verificationProvider: GOOGLE_ADDRESS_VALIDATION_PROVIDER,
+  };
+}
+
 /**
  * Resolve a single address using the same Phase 1 evaluateAddressSuggestion
- * semantics as autocomplete. Never throws away the row.
+ * semantics as autocomplete. Local Photon/Nominatim/Places run first.
+ * Google Address Validation is used only when configured and local providers
+ * cannot produce a strong verified candidate. Never throws away the row.
  */
 export async function resolveOneAddress(
   entry: BatchResolveInput,
-  search: AddressSearchFn = searchAddressAutocomplete
+  search: AddressSearchFn = searchAddressAutocomplete,
+  googleValidate?: GoogleValidateFn | null
 ): Promise<BatchResolveResult> {
   const rawInput = entry.rawInput;
   const normalizedInput = (entry.searchInput ?? entry.rawInput).replace(/\s+/g, " ").trim();
   const matchInput = normalizedInput || rawInput.trim();
+  const googleFn =
+    googleValidate === undefined
+      ? search === searchAddressAutocomplete
+        ? productionGoogleValidate
+        : null
+      : googleValidate;
 
   const base = {
     id: entry.id,
@@ -123,78 +276,70 @@ export async function resolveOneAddress(
     return result;
   }
 
-  let suggestions: AutocompleteSuggestion[];
+  let local: BatchResolveResult | undefined;
+  let localFailed = false;
   try {
-    suggestions = await search({
+    const suggestions = await search({
       q: matchInput,
       limit: 8,
       serviceAreaOnly: true,
     });
+    local = localResultFromSuggestions(base, matchInput, suggestions);
   } catch (err) {
+    localFailed = true;
     console.warn(
       "[geocode:batch] provider failure",
       entry.id,
       err instanceof Error ? err.message : err
     );
-    const result: BatchResolveResult = {
+    local = {
       ...base,
       status: "unresolved",
       reason: SERVICE_UNAVAILABLE_REASON,
       candidates: [],
     };
-    logBatchRow(result, 0);
-    return result;
   }
 
-  if (!suggestions.length) {
-    const result: BatchResolveResult = {
-      ...base,
-      status: "unresolved",
-      reason: "No confident match",
-      candidates: [],
-    };
-    logBatchRow(result, 0);
-    return result;
+  if (local.status === "verified") {
+    logBatchRow(local, local.candidates?.length ?? 0);
+    return local;
   }
 
-  const evaluated = suggestions.map((suggestion) => ({
-    suggestion,
-    evaluation: evaluateAddressSuggestion(matchInput, suggestion),
-  }));
-
-  const confirmable = evaluated.filter((e) => e.evaluation.canConfirm);
-
-  if (evaluated[0].evaluation.verificationStatus === "verified") {
-    const result: BatchResolveResult = {
-      ...base,
-      status: "verified",
-      candidate: serializeCandidate(evaluated[0].suggestion),
-      candidates: confirmable.map((e) => serializeCandidate(e.suggestion)),
-    };
-    logBatchRow(result, suggestions.length);
-    return result;
+  if (googleFn) {
+    try {
+      const decision = await googleFn(matchInput);
+      if (decision) {
+        const google = googleResult(base, decision);
+        if (google.status === "verified") {
+          logBatchRow(google, 1);
+          return google;
+        }
+        if (google.status === "needs_review" && google.suggestedCorrection) {
+          logBatchRow(google, 1);
+          return google;
+        }
+        if (local.status !== "needs_review" && google.status === "needs_review") {
+          logBatchRow(google, 1);
+          return google;
+        }
+      }
+    } catch (err) {
+      console.warn(
+        "[geocode:google] provider failure",
+        entry.id,
+        err instanceof Error ? err.message : err
+      );
+      // Keep the local row. Do not drop it because Google is down.
+    }
   }
 
-  if (confirmable.length > 0) {
-    const result: BatchResolveResult = {
-      ...base,
-      status: "needs_review",
-      candidate: serializeCandidate(confirmable[0].suggestion),
-      candidates: confirmable.map((e) => serializeCandidate(e.suggestion)),
-      reason: evaluated[0].evaluation.reasons[0] ?? "Needs confirmation",
-    };
-    logBatchRow(result, suggestions.length);
-    return result;
+  if (localFailed && local.status === "unresolved") {
+    logBatchRow(local, 0);
+    return local;
   }
 
-  const result: BatchResolveResult = {
-    ...base,
-    status: "unresolved",
-    reason: evaluated[0].evaluation.reasons[0] ?? "No confident match",
-    candidates: [],
-  };
-  logBatchRow(result, suggestions.length);
-  return result;
+  logBatchRow(local, local.candidates?.length ?? 0);
+  return local;
 }
 
 export async function resolveAddressBatch(
@@ -202,12 +347,21 @@ export async function resolveAddressBatch(
   options?: {
     search?: AddressSearchFn;
     concurrency?: number;
+    googleValidate?: GoogleValidateFn | null;
   }
 ): Promise<{ results: BatchResolveResult[]; count: ReturnType<typeof summarizeVerificationCounts> }> {
   const search = options?.search ?? searchAddressAutocomplete;
   const concurrency = options?.concurrency ?? BATCH_RESOLVE_CONCURRENCY;
+  const googleValidate =
+    options && "googleValidate" in options
+      ? options.googleValidate
+      : options?.search
+        ? null
+        : undefined;
 
-  const results = await mapPool(entries, concurrency, (entry) => resolveOneAddress(entry, search));
+  const results = await mapPool(entries, concurrency, (entry) =>
+    resolveOneAddress(entry, search, googleValidate)
+  );
 
   const count = summarizeVerificationCounts(
     entries.length,

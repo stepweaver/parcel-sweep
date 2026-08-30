@@ -1467,6 +1467,107 @@ select:focus {
 .quick-route-verify-canonical {
   font-weight: 500;
   color: var(--text-muted);
+  display: block;
+}
+
+.quick-route-verify-source {
+  font-weight: 500;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.quick-route-verify-badge.is-manual {
+  color: #0f766e;
+}
+
+.quick-route-correction {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.35rem;
+}
+
+.route-readiness {
+  margin: 0.85rem 0 0.5rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.route-readiness-total {
+  font-weight: 800;
+  margin-bottom: 0.35rem;
+}
+
+.route-readiness-status {
+  margin-top: 0.45rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.manual-pin-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.manual-pin-dialog {
+  width: min(560px, 100%);
+  max-height: 92vh;
+  background: var(--surface);
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.manual-pin-copy {
+  padding: 0.9rem 1rem 0.65rem;
+}
+
+.manual-pin-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.manual-pin-address {
+  font-weight: 800;
+  font-size: 1rem;
+  margin-top: 0.2rem;
+}
+
+.manual-pin-hint {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: 0.35rem;
+  line-height: 1.4;
+}
+
+.manual-pin-map {
+  width: 100%;
+  height: min(52vh, 380px);
+}
+
+.manual-pin-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 1rem 1rem;
+}
+
+.manual-pin-actions .btn-primary,
+.manual-pin-actions .btn-secondary {
+  min-height: 44px;
 }
 
 .quick-route-review-panel {

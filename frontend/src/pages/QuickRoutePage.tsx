@@ -11,6 +11,7 @@ import {
   detectProbableDuplicates,
   keepDuplicateStop,
   removeDuplicateStop,
+  summarizeRouteReadiness,
   summarizeVerificationCounts,
 } from "../utils/batchAccounting";
 import {
@@ -18,17 +19,25 @@ import {
   applyStopSearchEdit,
   applyStopSuggestion,
   applyStopTextEdit,
+  applySuggestedCorrection,
   confirmableCandidates,
+  confirmManualPin,
+  adjustManualPin,
   matchInputFor,
   mergeImportedStops,
   migrateSavedStops,
+  manualPinMapCenter,
   newStop,
   newStopFromSegment,
+  stopAllowsAdjustPin,
+  stopAllowsManualPin,
   stopBlocksRoute,
   stopIsFilled,
+  verificationSourceCopy,
   type QuickRouteStop,
   type VerificationStatus,
 } from "../utils/quickRouteStops";
+import { ManualPinPicker } from "../components/ManualPinPicker";
 
 type StartMode = "station" | "location" | "custom";
 
@@ -89,12 +98,6 @@ function buildTextList(result: QuickRouteResponse): string {
   )].join("\n");
 }
 
-function verificationLabel(status: VerificationStatus): string {
-  if (status === "verified") return "Verified";
-  if (status === "needs_review") return "Needs review";
-  return "Unresolved";
-}
-
 function toSuggestion(candidate: BatchResolveCandidate): AddressSuggestion {
   return {
     placeId: candidate.placeId,
@@ -109,6 +112,42 @@ function toSuggestion(candidate: BatchResolveCandidate): AddressSuggestion {
     zip: candidate.zip,
     houseNumber: candidate.houseNumber,
     street: candidate.street,
+  };
+}
+
+function toBatchEntry(result: {
+  id: string;
+  rawInput: string;
+  normalizedInput: string;
+  status: VerificationStatus;
+  candidate?: BatchResolveCandidate;
+  candidates?: BatchResolveCandidate[];
+  reason?: string;
+  verificationMethod?: "provider" | "manual_pin";
+  verificationProvider?: string;
+  suggestedCorrection?: {
+    explanation: string;
+    changedComponents: string[];
+    candidate: BatchResolveCandidate;
+  };
+}) {
+  return {
+    id: result.id,
+    rawInput: result.rawInput,
+    normalizedInput: result.normalizedInput,
+    status: result.status,
+    candidate: result.candidate ? toSuggestion(result.candidate) : undefined,
+    candidates: result.candidates?.map(toSuggestion),
+    reason: result.reason,
+    verificationMethod: result.verificationMethod,
+    verificationProvider: result.verificationProvider,
+    suggestedCorrection: result.suggestedCorrection
+      ? {
+          explanation: result.suggestedCorrection.explanation,
+          changedComponents: result.suggestedCorrection.changedComponents,
+          candidate: toSuggestion(result.suggestedCorrection.candidate),
+        }
+      : undefined,
   };
 }
 
@@ -138,6 +177,7 @@ export function QuickRoutePage() {
   const [batchCountError, setBatchCountError] = useState("");
   const [batchResolveError, setBatchResolveError] = useState("");
   const [verifiedExpanded, setVerifiedExpanded] = useState(false);
+  const [pinStopId, setPinStopId] = useState<string | null>(null);
 
   // Submission
   const [loading, setLoading] = useState(false);
@@ -225,6 +265,36 @@ export function QuickRoutePage() {
           : s
       )
     );
+  }, []);
+
+  const handleAcceptCorrection = useCallback((stopId: string) => {
+    setStops((prev) =>
+      prev.map((s) =>
+        s.id === stopId && s.suggestedCorrection
+          ? applySuggestedCorrection(s, s.suggestedCorrection)
+          : s
+      )
+    );
+  }, []);
+
+  const handleConfirmManualPin = useCallback(async (stopId: string, lat: number, lng: number) => {
+    let reverseLabel: string | undefined;
+    try {
+      const res = await api.geocode.reverse(lat, lng);
+      reverseLabel = res.label || undefined;
+    } catch {
+      reverseLabel = undefined;
+    }
+    setStops((prev) =>
+      prev.map((s) => {
+        if (s.id !== stopId) return s;
+        if (s.verificationMethod === "manual_pin" && s.verificationStatus === "verified") {
+          return adjustManualPin(s, lat, lng, { reverseLabel });
+        }
+        return confirmManualPin(s, { stopId, lat, lng }, { reverseLabel });
+      })
+    );
+    setPinStopId(null);
   }, []);
 
   const handleSuggestionsChange = useCallback((stopId: string, suggestions: AddressSuggestion[]) => {
@@ -323,15 +393,7 @@ export function QuickRoutePage() {
             unresolvedReason: "Batch processing error: this address was not returned.",
           };
         }
-        return applyResolvedBatchEntry(stop, {
-          id: result.id,
-          rawInput: result.rawInput,
-          normalizedInput: result.normalizedInput,
-          status: result.status,
-          candidate: result.candidate ? toSuggestion(result.candidate) : undefined,
-          candidates: result.candidates?.map(toSuggestion),
-          reason: result.reason,
-        });
+        return applyResolvedBatchEntry(stop, toBatchEntry(result));
       });
       const count = summarizeVerificationCounts(
         segments.length,
@@ -385,15 +447,7 @@ export function QuickRoutePage() {
       setStops((prev) =>
         prev.map((s) =>
           s.id === stopId
-            ? applyResolvedBatchEntry(s, {
-                id: result.id,
-                rawInput: result.rawInput,
-                normalizedInput: result.normalizedInput,
-                status: result.status,
-                candidate: result.candidate ? toSuggestion(result.candidate) : undefined,
-                candidates: result.candidates?.map(toSuggestion),
-                reason: result.reason,
-              })
+            ? applyResolvedBatchEntry(s, toBatchEntry(result))
             : s
         )
       );
@@ -433,6 +487,7 @@ export function QuickRoutePage() {
     setBatchCountError("");
     setBatchResolveError("");
     setTranscript("");
+    setPinStopId(null);
   }, []);
 
   const selectedStation = STATIONS.find((s) => s.id === stationId) ?? DEFAULT_STATION;
@@ -462,6 +517,8 @@ export function QuickRoutePage() {
     () => detectProbableDuplicates(filledStops),
     [filledStops]
   );
+  const readiness = useMemo(() => summarizeRouteReadiness(filledStops), [filledStops]);
+  const pinStop = pinStopId ? stops.find((s) => s.id === pinStopId) : undefined;
   const hasUnverifiedStops = filledStops.some((s) => stopBlocksRoute(s));
   const canSubmit =
     !loading &&
@@ -487,6 +544,9 @@ export function QuickRoutePage() {
           placeId: s.placeId,
           confidence: s.confidence,
           verificationStatus: s.verificationStatus,
+          verificationMethod: s.verificationMethod,
+          verificationProvider: s.verificationProvider,
+          manualVerifiedAt: s.manualVerifiedAt,
         })),
       });
       setResult(res);
@@ -696,6 +756,8 @@ export function QuickRoutePage() {
               resolvingStopId={resolvingStopId}
               onKeepDuplicate={handleKeepDuplicate}
               onRemoveDuplicate={handleRemoveDuplicate}
+              onAcceptCorrection={handleAcceptCorrection}
+              onSetLocationOnMap={setPinStopId}
             />
           )}
 
@@ -763,20 +825,35 @@ export function QuickRoutePage() {
                       ×
                     </button>
                   </div>
-                  {filled && (
-                    <div
-                      className={`quick-route-verify-badge quick-route-verify-${stop.verificationStatus}`}
-                      style={{ marginLeft: 34, marginTop: ".28rem" }}
-                    >
-                      {stop.verificationStatus === "verified" && "✓ "}
-                      {verificationLabel(stop.verificationStatus)}
-                      {stop.verificationStatus === "verified" && stop.address !== stop.rawInput && (
-                        <span className="quick-route-verify-canonical"> · {stop.address}</span>
-                      )}
-                    </div>
-                  )}
+                  {filled && (() => {
+                    const copy = verificationSourceCopy(stop);
+                    return (
+                      <div
+                        className={`quick-route-verify-badge quick-route-verify-${stop.verificationStatus}${stop.verificationMethod === "manual_pin" ? " is-manual" : ""}`}
+                        style={{ marginLeft: 34, marginTop: ".28rem" }}
+                      >
+                        <div>{copy.title}</div>
+                        {copy.detail && <div className="quick-route-verify-source">{copy.detail}</div>}
+                        {stop.verificationStatus === "verified" && stop.address !== stop.rawInput && (
+                          <span className="quick-route-verify-canonical">{stop.address}</span>
+                        )}
+                      </div>
+                    );
+                  })()}
                   {filled && stop.verificationStatus === "needs_review" && (
                     <div className="quick-route-review-panel">
+                      {stop.suggestedCorrection && (
+                        <div className="quick-route-correction">
+                          <div className="quick-route-review-hint">{stop.suggestedCorrection.explanation}</div>
+                          <button
+                            type="button"
+                            className="quick-route-review-option"
+                            onClick={() => handleAcceptCorrection(stop.id)}
+                          >
+                            Use suggested address: {stop.suggestedCorrection.candidate.displayName}
+                          </button>
+                        </div>
+                      )}
                       {confirmable.length > 0 ? (
                         <>
                           <div className="quick-route-review-hint">Choose the correct address:</div>
@@ -791,11 +868,11 @@ export function QuickRoutePage() {
                             </button>
                           ))}
                         </>
-                      ) : (
+                      ) : !stop.suggestedCorrection ? (
                         <div className="quick-route-review-hint">
-                          No matching South Bend 46613/46614 candidate yet. Edit the address or pick a suggestion.
+                          No matching South Bend 46613/46614 candidate yet. Edit the address, pick a suggestion, or set the location on the map.
                         </div>
-                      )}
+                      ) : null}
                       <button
                         type="button"
                         className="batch-action-btn"
@@ -804,11 +881,20 @@ export function QuickRoutePage() {
                       >
                         {resolvingStopId === stop.id ? "Resolving…" : "Resolve again"}
                       </button>
+                      {stopAllowsManualPin(stop) && (
+                        <button
+                          type="button"
+                          className="batch-action-btn"
+                          onClick={() => setPinStopId(stop.id)}
+                        >
+                          Set location on map
+                        </button>
+                      )}
                     </div>
                   )}
                   {filled && stop.verificationStatus === "unresolved" && (
                     <div className="quick-route-review-hint" style={{ marginLeft: 34 }}>
-                      {stop.unresolvedReason ?? "Could not resolve this address. Pick a suggestion or edit the text."}
+                      {stop.unresolvedReason ?? "Could not resolve this address. Pick a suggestion, edit the text, or set the location on the map."}
                       <div>
                         <button
                           type="button"
@@ -818,7 +904,27 @@ export function QuickRoutePage() {
                         >
                           {resolvingStopId === stop.id ? "Resolving…" : "Resolve again"}
                         </button>
+                        {stopAllowsManualPin(stop) && (
+                          <button
+                            type="button"
+                            className="batch-action-btn"
+                            onClick={() => setPinStopId(stop.id)}
+                          >
+                            Set location on map
+                          </button>
+                        )}
                       </div>
+                    </div>
+                  )}
+                  {filled && stopAllowsAdjustPin(stop) && (
+                    <div style={{ marginLeft: 34 }}>
+                      <button
+                        type="button"
+                        className="batch-action-btn"
+                        onClick={() => setPinStopId(stop.id)}
+                      >
+                        Adjust pin
+                      </button>
                     </div>
                   )}
                   {filled && duplicate && (
@@ -876,9 +982,24 @@ export function QuickRoutePage() {
           </p>
         )}
 
+        {filledStops.length > 0 && (
+          <div className="route-readiness" role="status">
+            <div className="route-readiness-total">{readiness.total} address{readiness.total === 1 ? "" : "es"}</div>
+            <div className="batch-summary-row ok">{readiness.providerVerified} provider verified</div>
+            <div className="batch-summary-row ok">{readiness.manuallyVerified} manually verified</div>
+            <div className="batch-summary-row review">{readiness.needsReview} need review</div>
+            <div className="batch-summary-row unresolved">{readiness.unresolved} unresolved</div>
+            <div className="route-readiness-status">
+              {readiness.readyToRoute
+                ? "Ready to route"
+                : `${readiness.attentionCount} address${readiness.attentionCount === 1 ? "" : "es"} still need attention`}
+            </div>
+          </div>
+        )}
+
         {hasUnverifiedStops && filledStops.length > 0 && (
           <p className="text-muted" style={{ fontSize: ".82rem", marginTop: ".75rem", marginBottom: ".5rem" }}>
-            Verify every stop before generating a route. Batch processing is not enough — unresolved and needs-review stops stay blocked.
+            Verify every stop before generating a route. Unresolved and needs-review stops stay blocked.
           </p>
         )}
 
@@ -1145,6 +1266,21 @@ export function QuickRoutePage() {
           </div>
         )}
       </div>
+      {pinStop && (
+        <ManualPinPicker
+          addressLabel={matchInputFor(pinStop) || pinStop.rawInput || pinStop.address}
+          center={manualPinMapCenter(pinStop, filledStops)}
+          initialPin={
+            pinStop.verificationMethod === "manual_pin" &&
+            pinStop.lat !== undefined &&
+            pinStop.lng !== undefined
+              ? { lat: pinStop.lat, lng: pinStop.lng }
+              : undefined
+          }
+          onCancel={() => setPinStopId(null)}
+          onConfirm={(lat, lng) => void handleConfirmManualPin(pinStop.id, lat, lng)}
+        />
+      )}
     </main>
   );
 }

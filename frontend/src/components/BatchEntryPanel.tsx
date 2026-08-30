@@ -7,8 +7,11 @@ import type { ProbableDuplicate } from "../utils/batchAccounting";
 import {
   confirmableCandidates,
   matchInputFor,
+  stopAllowsManualPin,
+  verificationSourceCopy,
   type QuickRouteStop,
 } from "../utils/quickRouteStops";
+import { summarizeRouteReadiness } from "../utils/batchAccounting";
 
 interface BatchEntryPanelProps {
   transcript: string;
@@ -32,6 +35,8 @@ interface BatchEntryPanelProps {
   resolvingStopId: string | null;
   onKeepDuplicate: (stopId: string) => void;
   onRemoveDuplicate: (stopId: string) => void;
+  onAcceptCorrection: (stopId: string) => void;
+  onSetLocationOnMap: (stopId: string) => void;
 }
 
 export function BatchEntryPanel({
@@ -56,6 +61,8 @@ export function BatchEntryPanel({
   resolvingStopId,
   onKeepDuplicate,
   onRemoveDuplicate,
+  onAcceptCorrection,
+  onSetLocationOnMap,
 }: BatchEntryPanelProps) {
   const parsedCount = useMemo(() => segmentAddresses(transcript).length, [transcript]);
   const speech = useSpeechRecognition(onAppendFinal);
@@ -69,6 +76,7 @@ export function BatchEntryPanel({
   const exceptions = filledStops.filter((s) => s.verificationStatus !== "verified");
   const verifiedStops = filledStops.filter((s) => s.verificationStatus === "verified");
   const canResolve = transcript.trim().length > 0 && !resolving;
+  const readiness = summarizeRouteReadiness(filledStops);
 
   return (
     <div className="batch-entry-panel">
@@ -155,13 +163,19 @@ export function BatchEntryPanel({
 
       {summary && (
         <div className="batch-summary" role="status">
-          <div className="batch-summary-total">{summary.parsed} addresses processed</div>
-          <div className="batch-summary-row ok">✓ {summary.verified} Verified</div>
-          <div className="batch-summary-row review">! {summary.needsReview} Need review</div>
-          <div className="batch-summary-row unresolved">× {summary.unresolved} Unresolved</div>
+          <div className="batch-summary-total">{readiness.total || summary.parsed} addresses</div>
+          <div className="batch-summary-row ok">{readiness.providerVerified} provider verified</div>
+          <div className="batch-summary-row ok">{readiness.manuallyVerified} manually verified</div>
+          <div className="batch-summary-row review">{readiness.needsReview} need review</div>
+          <div className="batch-summary-row unresolved">{readiness.unresolved} unresolved</div>
           <div className="batch-summary-total-line">
-            TOTAL = {summary.accountedFor}
-            {summary.ok ? "" : " — count mismatch"}
+            TOTAL = {readiness.accountedFor || summary.accountedFor}
+            {readiness.ok && summary.ok ? "" : " — count mismatch"}
+          </div>
+          <div className="route-readiness-status">
+            {readiness.readyToRoute
+              ? "Ready to route"
+              : `${readiness.attentionCount} address${readiness.attentionCount === 1 ? "" : "es"} still need attention`}
           </div>
         </div>
       )}
@@ -214,6 +228,18 @@ export function BatchEntryPanel({
                     ))}
                   </div>
                 )}
+                {stop.suggestedCorrection && (
+                  <div className="quick-route-correction">
+                    <div className="quick-route-review-hint">{stop.suggestedCorrection.explanation}</div>
+                    <button
+                      type="button"
+                      className="quick-route-review-option"
+                      onClick={() => onAcceptCorrection(stop.id)}
+                    >
+                      Use suggested address: {stop.suggestedCorrection.candidate.displayName}
+                    </button>
+                  </div>
+                )}
                 <input
                   className="batch-exception-edit"
                   value={stop.address}
@@ -228,6 +254,15 @@ export function BatchEntryPanel({
                 >
                   {resolvingStopId === stop.id ? "Resolving…" : "Resolve again"}
                 </button>
+                {stopAllowsManualPin(stop) && (
+                  <button
+                    type="button"
+                    className="batch-action-btn"
+                    onClick={() => onSetLocationOnMap(stop.id)}
+                  >
+                    Set location on map
+                  </button>
+                )}
               </div>
             );
           })}
@@ -246,14 +281,18 @@ export function BatchEntryPanel({
             {verifiedExpanded ? " ▾" : " ▸"}
           </button>
           {verifiedExpanded &&
-            verifiedStops.map((stop) => (
+            verifiedStops.map((stop) => {
+              const copy = verificationSourceCopy(stop);
+              return (
               <div key={stop.id} className="batch-verified-row">
                 {stop.address}
+                <div className="quick-route-verify-source">{copy.detail ?? copy.title}</div>
                 {stop.rawInput && stop.rawInput !== stop.address && (
                   <div className="batch-exception-raw">Original: {stop.rawInput}</div>
                 )}
               </div>
-            ))}
+              );
+            })}
         </div>
       )}
     </div>

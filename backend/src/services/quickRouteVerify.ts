@@ -16,6 +16,7 @@ import { getCachedPlaceGeometry } from "./addressAutocomplete.js";
 import { haversineMeters } from "./addressAutocompleteRank.js";
 
 export type VerificationStatus = "unresolved" | "needs_review" | "verified";
+export type VerificationMethod = "provider" | "manual_pin";
 
 export interface SuggestionLike {
   placeId: string;
@@ -95,15 +96,70 @@ export interface VerifiedStopCoords {
   address: string;
   lat: number;
   lng: number;
-  placeId: string;
+  placeId?: string;
+  verificationMethod: VerificationMethod;
+}
+
+function hasAddressText(stop: { address?: unknown; rawInput?: unknown }): boolean {
+  if (typeof stop.address === "string" && stop.address.trim().length > 0) return true;
+  if (typeof stop.rawInput === "string" && stop.rawInput.trim().length > 0) return true;
+  return false;
+}
+
+function validateManualPinStop(stop: {
+  address?: unknown;
+  rawInput?: unknown;
+  lat?: unknown;
+  lng?: unknown;
+  verificationStatus?: unknown;
+  verificationMethod?: unknown;
+}): { ok: true; stop: VerifiedStopCoords } | { ok: false; error: string } {
+  if (stop.verificationStatus !== "verified" || stop.verificationMethod !== "manual_pin") {
+    return {
+      ok: false,
+      error: "Manual pin stops must be explicitly verified with verificationMethod manual_pin.",
+    };
+  }
+  if (!hasAddressText(stop)) {
+    return { ok: false, error: "Each manually verified stop must include the original address." };
+  }
+  if (typeof stop.lat !== "number" || typeof stop.lng !== "number") {
+    return { ok: false, error: "Each manually verified stop must include numeric lat/lng." };
+  }
+  if (!hasUsableGeometry(stop.lat, stop.lng)) {
+    return { ok: false, error: "Stop coordinates are missing or not a valid lat/lng." };
+  }
+  if (!isWithinQuickRouteBounds(stop.lat, stop.lng)) {
+    return {
+      ok: false,
+      error: `Coordinates for "${typeof stop.address === "string" ? stop.address : "stop"}" are outside the Quick Route service area.`,
+    };
+  }
+
+  const address =
+    typeof stop.address === "string" && stop.address.trim()
+      ? stop.address.trim()
+      : String(stop.rawInput).trim();
+
+  return {
+    ok: true,
+    stop: {
+      address,
+      lat: stop.lat,
+      lng: stop.lng,
+      verificationMethod: "manual_pin",
+    },
+  };
 }
 
 export function validateVerifiedStopCoords(stop: {
   address?: unknown;
+  rawInput?: unknown;
   lat?: unknown;
   lng?: number | unknown;
   placeId?: unknown;
   verificationStatus?: unknown;
+  verificationMethod?: unknown;
 }): { ok: true; stop: VerifiedStopCoords } | { ok: false; error: string } {
   if (stop.verificationStatus !== "verified") {
     return {
@@ -111,6 +167,11 @@ export function validateVerifiedStopCoords(stop: {
       error: "Each Quick Route stop must be verified before route optimization.",
     };
   }
+
+  if (stop.verificationMethod === "manual_pin") {
+    return validateManualPinStop(stop);
+  }
+
   if (typeof stop.address !== "string" || stop.address.trim().length === 0) {
     return { ok: false, error: "Each verified stop must include an address." };
   }
@@ -148,6 +209,7 @@ export function validateVerifiedStopCoords(stop: {
       lat: stop.lat,
       lng: stop.lng,
       placeId: stop.placeId.trim(),
+      verificationMethod: "provider",
     },
   };
 }
@@ -166,6 +228,9 @@ export interface EditableStop {
   placeId?: string;
   confidence?: AddressConfidence;
   verificationStatus: VerificationStatus;
+  verificationMethod?: VerificationMethod;
+  verificationProvider?: string;
+  manualVerifiedAt?: string;
 }
 
 export function applyStopTextEdit<T extends EditableStop>(stop: T, text: string): T {
@@ -179,6 +244,9 @@ export function applyStopTextEdit<T extends EditableStop>(stop: T, text: string)
     placeId: undefined,
     confidence: undefined,
     verificationStatus: "unresolved" as const,
+    verificationMethod: undefined,
+    verificationProvider: undefined,
+    manualVerifiedAt: undefined,
   };
 }
 
