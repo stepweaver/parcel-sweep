@@ -587,13 +587,13 @@ export function manualPinMapCenter(
 }
 
 export function verificationSourceCopy(stop: QuickRouteStop): { title: string; detail?: string } {
-  if (stop.verificationStatus === "needs_review") return { title: "Needs review" };
-  if (stop.verificationStatus !== "verified") return { title: "Unresolved" };
+  if (stop.verificationStatus === "needs_review") return { title: "Check this" };
+  if (stop.verificationStatus !== "verified") return { title: "Needs a location" };
   if (stop.verificationMethod === "manual_pin") {
-    return { title: "✓ Manually verified", detail: "Location selected on map" };
+    return { title: "Ready", detail: "Pinned by you" };
   }
   if (stop.verificationProvider === GOOGLE_ADDRESS_VALIDATION_PROVIDER) {
-    return { title: "✓ Verified", detail: "Google Address Validation" };
+    return { title: "Ready", detail: "Google Address Validation" };
   }
-  return { title: "✓ Verified" };
+  return { title: "Ready" };
 }

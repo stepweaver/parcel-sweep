@@ -78,12 +78,11 @@ export function ManualPinPicker({
       <div className="manual-pin-dialog">
         <div className="manual-pin-copy">
           <div id="manual-pin-title" className="manual-pin-title">
-            Set location for:
+            Pin this stop
           </div>
           <div className="manual-pin-address">{addressLabel}</div>
           <div className="manual-pin-hint">
-            Tap the map to drop a pin, then drag it if needed. Verification happens only when you
-            confirm.
+            Tap the house on the map. You can drag the pin to adjust it.
           </div>
         </div>
         <div ref={containerRef} className="manual-pin-map" />
@@ -97,7 +96,7 @@ export function ManualPinPicker({
               onConfirm(pending.lat, pending.lng);
             }}
           >
-            Use this location
+            Use this pin
           </button>
           <button type="button" className="btn-secondary" onClick={onCancel}>
             Cancel

@@ -1,17 +1,6 @@
 import { useMemo } from "react";
-import type { AddressSuggestion } from "./AddressAutocomplete";
-import type { BatchCountSummary } from "../api";
 import { useSpeechRecognition } from "../hooks/useSpeechRecognition";
 import { segmentAddresses } from "../utils/addressSegmenter";
-import type { ProbableDuplicate } from "../utils/batchAccounting";
-import {
-  confirmableCandidates,
-  matchInputFor,
-  stopAllowsManualPin,
-  verificationSourceCopy,
-  type QuickRouteStop,
-} from "../utils/quickRouteStops";
-import { summarizeRouteReadiness } from "../utils/batchAccounting";
 
 interface BatchEntryPanelProps {
   transcript: string;
@@ -21,22 +10,11 @@ interface BatchEntryPanelProps {
   onClearExistingChange: (value: boolean) => void;
   resolving: boolean;
   onResolve: () => void;
-  onCancel: () => void;
-  summary: BatchCountSummary | null;
-  countError: string;
+  collapsed: boolean;
+  onExpand: () => void;
+  onCollapse: () => void;
   resolveError: string;
-  filledStops: QuickRouteStop[];
-  duplicates: ProbableDuplicate[];
-  verifiedExpanded: boolean;
-  onVerifiedExpandedChange: (value: boolean) => void;
-  onConfirmCandidate: (stopId: string, suggestion: AddressSuggestion) => void;
-  onSearchEdit: (stopId: string, text: string) => void;
-  onResolveAgain: (stopId: string) => void;
-  resolvingStopId: string | null;
-  onKeepDuplicate: (stopId: string) => void;
-  onRemoveDuplicate: (stopId: string) => void;
-  onAcceptCorrection: (stopId: string) => void;
-  onSetLocationOnMap: (stopId: string) => void;
+  hasStops: boolean;
 }
 
 export function BatchEntryPanel({
@@ -47,51 +25,40 @@ export function BatchEntryPanel({
   onClearExistingChange,
   resolving,
   onResolve,
-  onCancel,
-  summary,
-  countError,
+  collapsed,
+  onExpand,
+  onCollapse,
   resolveError,
-  filledStops,
-  duplicates,
-  verifiedExpanded,
-  onVerifiedExpandedChange,
-  onConfirmCandidate,
-  onSearchEdit,
-  onResolveAgain,
-  resolvingStopId,
-  onKeepDuplicate,
-  onRemoveDuplicate,
-  onAcceptCorrection,
-  onSetLocationOnMap,
+  hasStops,
 }: BatchEntryPanelProps) {
   const parsedCount = useMemo(() => segmentAddresses(transcript).length, [transcript]);
   const speech = useSpeechRecognition(onAppendFinal);
-
-  const duplicateByStop = useMemo(() => {
-    const map = new Map<string, ProbableDuplicate>();
-    for (const flag of duplicates) map.set(flag.stopId, flag);
-    return map;
-  }, [duplicates]);
-
-  const exceptions = filledStops.filter((s) => s.verificationStatus !== "verified");
-  const verifiedStops = filledStops.filter((s) => s.verificationStatus === "verified");
   const canResolve = transcript.trim().length > 0 && !resolving;
-  const readiness = summarizeRouteReadiness(filledStops);
+
+  if (collapsed) {
+    return (
+      <div className="qr-batch-collapsed">
+        <button type="button" className="qr-text-btn" onClick={onExpand}>
+          Add more stops
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="batch-entry-panel">
-      <div className="batch-entry-copy">
-        Paste, type, or dictate addresses. Review the transcript, then resolve.
-        Say “next address” between stops, or put each address on its own line.
-      </div>
+      <label className="batch-entry-copy" htmlFor="qr-batch-transcript">
+        Add one address per line, or use the microphone and say “next address” between stops.
+      </label>
 
       <textarea
+        id="qr-batch-transcript"
         className="batch-entry-transcript"
         value={transcript}
         onChange={(e) => onTranscriptChange(e.target.value)}
         placeholder={"2221 South Olive St\n2107 South Mead St\n1918 W Indiana Ave"}
         autoFocus
-        aria-label="Address transcript"
+        aria-label="Paste, type, or speak your addresses"
       />
 
       <div className="batch-entry-speech">
@@ -101,36 +68,39 @@ export function BatchEntryPanel({
             className={`batch-mic-btn${speech.listening ? " is-listening" : ""}`}
             onClick={() => (speech.listening ? speech.stop() : speech.start())}
             aria-pressed={speech.listening}
-            aria-label={speech.listening ? "Stop recording" : "Start recording"}
+            aria-label={speech.listening ? "Stop recording" : "Speak addresses"}
           >
-            {speech.listening ? "Stop" : "Mic"}
+            {speech.listening ? "Stop" : "Speak addresses"}
           </button>
         ) : (
           <div className="batch-speech-fallback" role="status">
-            Browser speech recognition isn't available here. Use your device's keyboard
-            dictation or paste addresses instead.
+            Voice entry isn’t available in this browser. Paste a list or type one address per line.
           </div>
         )}
         {speech.listening && (
           <span className="batch-listening-state" role="status">
-            Listening… {speech.interim ? speech.interim : "speak an address, then say next address"}
+            Listening… {speech.interim ? speech.interim : "say an address, then next address"}
           </span>
         )}
       </div>
       {speech.error && <div className="batch-entry-error">{speech.error}</div>}
 
       <div className="batch-entry-meta">
-        {parsedCount > 0 ? `${parsedCount} address${parsedCount === 1 ? "" : "es"} ready` : "No addresses yet"}
+        {parsedCount > 0
+          ? `${parsedCount} address${parsedCount === 1 ? "" : "es"}`
+          : "Paste, type, or speak your addresses"}
       </div>
 
-      <label className="batch-entry-clear">
-        <input
-          type="checkbox"
-          checked={clearExisting}
-          onChange={(e) => onClearExistingChange(e.target.checked)}
-        />
-        Clear existing stops
-      </label>
+      {hasStops && (
+        <label className="batch-entry-clear">
+          <input
+            type="checkbox"
+            checked={clearExisting}
+            onChange={(e) => onClearExistingChange(e.target.checked)}
+          />
+          Replace the stops I already added
+        </label>
+      )}
 
       <div className="batch-entry-actions">
         <button
@@ -141,158 +111,29 @@ export function BatchEntryPanel({
         >
           {resolving ? (
             <>
-              <span className="spinner" /> Resolving…
+              <span className="spinner" /> Checking addresses…
             </>
           ) : (
-            "Resolve addresses"
+            "Check addresses"
           )}
         </button>
-        <button type="button" className="btn-secondary" onClick={onCancel}>
-          Close
-        </button>
-      </div>
-      <div className="batch-entry-hint">
-        {clearExisting ? "This batch will replace the current stop list." : "This batch will be added to the current stop list."}
-      </div>
-
-      {(countError || resolveError) && (
-        <div className="batch-entry-error" role="alert">
-          {countError || resolveError}
-        </div>
-      )}
-
-      {summary && (
-        <div className="batch-summary" role="status">
-          <div className="batch-summary-total">{readiness.total || summary.parsed} addresses</div>
-          <div className="batch-summary-row ok">{readiness.providerVerified} provider verified</div>
-          <div className="batch-summary-row ok">{readiness.manuallyVerified} manually verified</div>
-          <div className="batch-summary-row review">{readiness.needsReview} need review</div>
-          <div className="batch-summary-row unresolved">{readiness.unresolved} unresolved</div>
-          <div className="batch-summary-total-line">
-            TOTAL = {readiness.accountedFor || summary.accountedFor}
-            {readiness.ok && summary.ok ? "" : " — count mismatch"}
-          </div>
-          <div className="route-readiness-status">
-            {readiness.readyToRoute
-              ? "Ready to route"
-              : `${readiness.attentionCount} address${readiness.attentionCount === 1 ? "" : "es"} still need attention`}
-          </div>
-        </div>
-      )}
-
-      {exceptions.length > 0 && (
-        <div className="batch-review-section">
-          <div className="batch-review-heading">Needs attention</div>
-          {exceptions.map((stop) => {
-            const matchInput = matchInputFor(stop);
-            const confirmable = confirmableCandidates(stop.reviewCandidates ?? [], matchInput);
-            const duplicate = duplicateByStop.get(stop.id);
-            return (
-              <div key={stop.id} className="batch-exception-card">
-                <div className="batch-exception-label">
-                  {stop.searchInput || stop.rawInput}
-                </div>
-                {stop.rawInput && stop.rawInput !== matchInput && (
-                  <div className="batch-exception-raw">Original: {stop.rawInput}</div>
-                )}
-                {stop.verificationStatus === "unresolved" && (
-                  <div className="batch-exception-reason">
-                    {stop.unresolvedReason ?? "No confident match"}
-                  </div>
-                )}
-                {duplicate && (
-                  <div className="batch-duplicate">
-                    <span>{duplicate.reason}</span>
-                    <div className="batch-duplicate-actions">
-                      <button type="button" className="batch-action-btn" onClick={() => onKeepDuplicate(stop.id)}>
-                        Keep both
-                      </button>
-                      <button type="button" className="batch-action-btn" onClick={() => onRemoveDuplicate(stop.id)}>
-                        Remove duplicate
-                      </button>
-                    </div>
-                  </div>
-                )}
-                {confirmable.length > 0 && (
-                  <div className="quick-route-review-panel" style={{ marginLeft: 0 }}>
-                    <div className="quick-route-review-hint">Choose the correct address:</div>
-                    {confirmable.map((candidate) => (
-                      <button
-                        key={candidate.placeId}
-                        type="button"
-                        className="quick-route-review-option"
-                        onClick={() => onConfirmCandidate(stop.id, candidate)}
-                      >
-                        {candidate.displayName}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {stop.suggestedCorrection && (
-                  <div className="quick-route-correction">
-                    <div className="quick-route-review-hint">{stop.suggestedCorrection.explanation}</div>
-                    <button
-                      type="button"
-                      className="quick-route-review-option"
-                      onClick={() => onAcceptCorrection(stop.id)}
-                    >
-                      Use suggested address: {stop.suggestedCorrection.candidate.displayName}
-                    </button>
-                  </div>
-                )}
-                <input
-                  className="batch-exception-edit"
-                  value={stop.address}
-                  onChange={(e) => onSearchEdit(stop.id, e.target.value)}
-                  aria-label="Edit address to resolve again"
-                />
-                <button
-                  type="button"
-                  className="batch-action-btn"
-                  onClick={() => onResolveAgain(stop.id)}
-                  disabled={resolvingStopId === stop.id}
-                >
-                  {resolvingStopId === stop.id ? "Resolving…" : "Resolve again"}
-                </button>
-                {stopAllowsManualPin(stop) && (
-                  <button
-                    type="button"
-                    className="batch-action-btn"
-                    onClick={() => onSetLocationOnMap(stop.id)}
-                  >
-                    Set location on map
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {verifiedStops.length > 0 && (
-        <div className="batch-review-section">
-          <button
-            type="button"
-            className="batch-verified-toggle"
-            onClick={() => onVerifiedExpandedChange(!verifiedExpanded)}
-            aria-expanded={verifiedExpanded}
-          >
-            Verified — {verifiedStops.length} address{verifiedStops.length === 1 ? "" : "es"}
-            {verifiedExpanded ? " ▾" : " ▸"}
+        {hasStops && (
+          <button type="button" className="btn-secondary" onClick={onCollapse}>
+            Done
           </button>
-          {verifiedExpanded &&
-            verifiedStops.map((stop) => {
-              const copy = verificationSourceCopy(stop);
-              return (
-              <div key={stop.id} className="batch-verified-row">
-                {stop.address}
-                <div className="quick-route-verify-source">{copy.detail ?? copy.title}</div>
-                {stop.rawInput && stop.rawInput !== stop.address && (
-                  <div className="batch-exception-raw">Original: {stop.rawInput}</div>
-                )}
-              </div>
-              );
-            })}
+        )}
+      </div>
+      {hasStops && (
+        <div className="batch-entry-hint">
+          {clearExisting
+            ? "This list will replace your current stops."
+            : "These addresses will be added to your current stops."}
+        </div>
+      )}
+
+      {resolveError && (
+        <div className="batch-entry-error" role="alert">
+          {resolveError}
         </div>
       )}
     </div>

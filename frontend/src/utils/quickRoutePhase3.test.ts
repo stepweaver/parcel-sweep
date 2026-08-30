@@ -45,7 +45,7 @@ describe("Phase 3 manual verification (A–L)", () => {
     assert.equal(stop.lat, undefined);
   });
 
-  it("C. explicit Use this location verifies", () => {
+  it("C. explicit Use this pin verifies", () => {
     const stop = manualStop();
     const draft = applyManualPinMapClick({ stopId: stop.id }, IN_BOUNDS.lat, IN_BOUNDS.lng);
     const verified = confirmManualPin(stop, draft, { at: "2026-08-29T12:00:00.000Z" });

@@ -13,6 +13,7 @@ import {
   removeDuplicateStop,
   summarizeRouteReadiness,
   summarizeVerificationCounts,
+  type ProbableDuplicate,
 } from "../utils/batchAccounting";
 import {
   applyResolvedBatchEntry,
@@ -33,10 +34,14 @@ import {
   stopAllowsManualPin,
   stopBlocksRoute,
   stopIsFilled,
-  verificationSourceCopy,
   type QuickRouteStop,
   type VerificationStatus,
 } from "../utils/quickRouteStops";
+import {
+  diagnosticStatusDetail,
+  friendlyUnresolvedMessage,
+  stopStatusDetail,
+} from "../utils/quickRouteCopy";
 import { ManualPinPicker } from "../components/ManualPinPicker";
 
 type StartMode = "station" | "location" | "custom";
@@ -151,10 +156,74 @@ function toBatchEntry(result: {
   };
 }
 
+function initialStops(raw: unknown): QuickRouteStop[] {
+  const migrated = migrateSavedStops(raw);
+  const filled = migrated.filter(stopIsFilled);
+  const empty = migrated.find((s) => !stopIsFilled(s));
+  if (filled.length === 0) return [empty ?? newStop()];
+  return empty ? [...filled, empty] : filled;
+}
+
+const START_MODE_LABEL: Record<StartMode, string> = {
+  location: "Current location",
+  station: "Home station",
+  custom: "Custom address",
+};
+
+function RemoveStopButton({
+  disabled,
+  onClick,
+}: {
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="qr-remove-btn"
+      title="Remove stop"
+      aria-label="Remove stop"
+      onClick={onClick}
+      disabled={disabled}
+    >
+      ×
+    </button>
+  );
+}
+
+function DuplicatePrompt({
+  onKeep,
+  onRemove,
+}: {
+  onKeep: () => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="qr-duplicate">
+      <p>You may have added this stop twice.</p>
+      <div className="batch-duplicate-actions">
+        <button type="button" className="batch-action-btn" onClick={onKeep}>
+          Keep both
+        </button>
+        <button type="button" className="batch-action-btn" onClick={onRemove}>
+          Remove one
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Exception cards are for checked stops that still need a decision — not live typing. */
+function stopShowsAsException(stop: QuickRouteStop): boolean {
+  if (!stopIsFilled(stop)) return false;
+  if (stop.verificationStatus === "needs_review") return true;
+  return stop.verificationStatus === "unresolved" && Boolean(stop.unresolvedReason);
+}
+
 export function QuickRoutePage() {
   const saved = loadSaved();
 
-  const [stops, setStops] = useState<QuickRouteStop[]>(() => migrateSavedStops(saved.stops));
+  const [stops, setStops] = useState<QuickRouteStop[]>(() => initialStops(saved.stops));
   const [startMode, setStartMode] = useState<StartMode>(saved.startMode ?? "location");
   const [stationId, setStationId] = useState(saved.stationId ?? DEFAULT_STATION.id);
   const [customAddress, setCustomAddress] = useState(saved.customAddress ?? "");
@@ -168,7 +237,9 @@ export function QuickRoutePage() {
   const [locationError, setLocationError] = useState("");
 
   // Batch entry panel
-  const [showBatch, setShowBatch] = useState(false);
+  const [batchOpen, setBatchOpen] = useState(() => !migrateSavedStops(saved.stops).some(stopIsFilled));
+  const [startOpen, setStartOpen] = useState(false);
+  const [editingStopId, setEditingStopId] = useState<string | null>(null);
   const [transcript, setTranscript] = useState("");
   const [clearExisting, setClearExisting] = useState(false);
   const [resolvingBatch, setResolvingBatch] = useState(false);
@@ -370,7 +441,7 @@ export function QuickRoutePage() {
   const handleResolveBatch = useCallback(async () => {
     const segments = segmentAddresses(transcript);
     if (segments.length === 0) {
-      setBatchResolveError("No addresses to resolve.");
+      setBatchResolveError("Add at least one address.");
       return;
     }
     setBatchResolveError("");
@@ -402,12 +473,15 @@ export function QuickRoutePage() {
       setBatchSummary(count);
       if (!count.ok || res.results.length !== segments.length || (res.count && !res.count.ok)) {
         setBatchCountError(
-          "Batch processing error: every heard or pasted address must be accounted for. Route generation stays blocked."
+          "Not every address was counted. Route creation stays blocked until this is fixed."
         );
       }
       setStops((prev) => mergeImportedStops(prev, incoming, clearExisting));
+      setBatchOpen(false);
+      setVerifiedExpanded(false);
+      setEditingStopId(null);
     } catch (err) {
-      setBatchResolveError(err instanceof Error ? err.message : "Could not resolve addresses.");
+      setBatchResolveError(err instanceof Error ? err.message : "We couldn't check those addresses.");
     } finally {
       setResolvingBatch(false);
     }
@@ -429,7 +503,7 @@ export function QuickRoutePage() {
       const result = res.results[0];
       if (!result || result.id !== stop.id) {
         setBatchCountError(
-          "Batch processing error: re-resolve did not return the same stop. Route generation stays blocked."
+          "Not every address was counted. Route creation stays blocked until this is fixed."
         );
         setStops((prev) =>
           prev.map((s) =>
@@ -475,12 +549,12 @@ export function QuickRoutePage() {
   const handleRemoveDuplicate = useCallback((stopId: string) => {
     setStops((prev) => {
       const next = removeDuplicateStop(prev, stopId);
-      return next.length > 0 ? next : [newStop(), newStop()];
+      return next.length > 0 ? next : [newStop()];
     });
   }, []);
 
   const handleClearAll = useCallback(() => {
-    setStops([newStop(), newStop()]);
+    setStops([newStop()]);
     setResult(null);
     setError("");
     setBatchSummary(null);
@@ -488,6 +562,9 @@ export function QuickRoutePage() {
     setBatchResolveError("");
     setTranscript("");
     setPinStopId(null);
+    setBatchOpen(true);
+    setVerifiedExpanded(false);
+    setEditingStopId(null);
   }, []);
 
   const selectedStation = STATIONS.find((s) => s.id === stationId) ?? DEFAULT_STATION;
@@ -519,6 +596,17 @@ export function QuickRoutePage() {
   );
   const readiness = useMemo(() => summarizeRouteReadiness(filledStops), [filledStops]);
   const pinStop = pinStopId ? stops.find((s) => s.id === pinStopId) : undefined;
+  const attentionStops = filledStops.filter(stopShowsAsException);
+  const workingStops = filledStops.filter((s) => !stopShowsAsException(s) && stopBlocksRoute(s));
+  const readyStops = filledStops.filter((s) => !stopBlocksRoute(s));
+  const emptyStops = stops.filter((s) => !stopIsFilled(s));
+  const isEmptyFlow = filledStops.length === 0;
+  const readyCount = readiness.providerVerified + readiness.manuallyVerified;
+  const duplicateByStop = useMemo(() => {
+    const map = new Map<string, ProbableDuplicate>();
+    for (const flag of duplicates) map.set(flag.stopId, flag);
+    return map;
+  }, [duplicates]);
   const hasUnverifiedStops = filledStops.some((s) => stopBlocksRoute(s));
   const canSubmit =
     !loading &&
@@ -527,6 +615,25 @@ export function QuickRoutePage() {
     !batchCountError &&
     resolvedStartAddress.length > 0 &&
     (startMode !== "location" || locatedCoords !== null);
+
+  const startSettled =
+    (startMode === "location" && locatedCoords !== null) ||
+    startMode === "station" ||
+    (startMode === "custom" && customAddress.trim().length > 0);
+  const startCompact =
+    !startOpen &&
+    !locationError &&
+    (startMode !== "custom" || customAddress.trim().length > 0);
+  const startSummaryLabel =
+    startMode === "location"
+      ? locatedCoords
+        ? "Current location"
+        : locating
+          ? "Finding your location…"
+          : "Location not yet available"
+      : startMode === "station"
+        ? selectedStation.name
+        : customAddress.trim() || "Custom address";
 
   const handleSubmit = async () => {
     setError("");
@@ -554,7 +661,7 @@ export function QuickRoutePage() {
         resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Route optimization failed.");
+      setError(err instanceof Error ? err.message : "We couldn't build that route.");
     } finally {
       setLoading(false);
     }
@@ -572,223 +679,466 @@ export function QuickRoutePage() {
   };
 
   return (
-    <main className="page-container">
-      <div style={{ maxWidth: 680, margin: "0 auto", padding: "2rem 1rem" }}>
-
-        {/* ── Header ─────────────────────────────────────────── */}
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "1.5rem", gap: "1rem" }}>
+    <main className="page-container quick-route-page">
+      <div className="qr-shell">
+        <header className="qr-header">
           <div>
-            <h1 style={{ fontSize: "1.5rem", fontWeight: 700, marginBottom: ".2rem" }}>
-              Quick Route
-            </h1>
-            <p className="text-muted" style={{ fontSize: ".875rem" }}>
-              Enter addresses, pick a start, and get an optimized route.
+            <h1 className="qr-title">Quick Route</h1>
+            <p className="qr-lede">
+              Add your stops. We’ll check the addresses and put them in a good order.
             </p>
           </div>
           {(filledStops.length > 0 || result) && (
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={handleClearAll}
-              style={{ flexShrink: 0, marginTop: ".2rem" }}
-            >
+            <button type="button" className="qr-text-btn qr-clear-all" onClick={handleClearAll}>
               Clear all
             </button>
           )}
-        </div>
+        </header>
 
-        {/* ── Start point ─────────────────────────────────── */}
-        <div className="card" style={{ marginBottom: "1.25rem" }}>
-          <div style={{ fontWeight: 700, fontSize: ".8rem", letterSpacing: ".06em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: ".75rem" }}>
-            Start from
-          </div>
-          <div style={{ display: "flex", gap: ".5rem", flexWrap: "wrap" }}>
-            {(["location", "station", "custom"] as StartMode[]).map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => setStartMode(mode)}
-                style={{
-                  padding: ".4rem .9rem",
-                  borderRadius: 999,
-                  border: "1.5px solid",
-                  borderColor: startMode === mode ? "var(--brand)" : "var(--border)",
-                  background: startMode === mode ? "var(--brand)" : "transparent",
-                  color: startMode === mode ? "#fff" : "var(--text)",
-                  fontWeight: 600,
-                  fontSize: ".85rem",
-                  cursor: "pointer",
-                  transition: "all .15s",
-                }}
-              >
-                {mode === "station" && "Home Station"}
-                {mode === "location" && "Current Location"}
-                {mode === "custom" && "Custom Address"}
-              </button>
-            ))}
-          </div>
-
-          {startMode === "station" && (
-            <select
-              value={stationId}
-              onChange={(e) => setStationId(e.target.value)}
-              style={{ width: "100%", marginTop: ".75rem" }}
-            >
-              {STATIONS.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name} — {s.address}
-                </option>
-              ))}
-            </select>
-          )}
-
-          {startMode === "location" && (
-            <>
-              <div style={{ display: "flex", gap: ".75rem", alignItems: "center", marginTop: ".75rem", flexWrap: "wrap" }}>
-                {locatedCoords ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: ".4rem", flex: 1 }}>
-                    <span style={{ color: "#16a34a", fontSize: ".95rem" }}>✓</span>
-                    <span style={{ fontSize: ".875rem", color: "var(--text-secondary)" }}>
-                      {locatedLabel}
-                    </span>
-                  </div>
-                ) : (
-                  <span className="text-muted" style={{ fontSize: ".875rem", flex: 1 }}>
-                    {locating ? "Locating…" : "Location not yet acquired"}
-                  </span>
-                )}
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={() => handleLocate()}
-                  disabled={locating}
-                  style={{ flexShrink: 0 }}
-                >
-                  {locating ? <><span className="spinner" /> Locating…</> : locatedCoords ? "Re-locate" : "Locate me"}
-                </button>
-              </div>
-              {locationError && (
-                <div style={{ color: "#dc2626", fontSize: ".85rem", marginTop: ".5rem" }}>
-                  {locationError}
+        <section className="qr-section qr-start" aria-labelledby="qr-start-label">
+          {startCompact ? (
+            <div className="qr-start-compact">
+              <div>
+                <div id="qr-start-label" className="qr-section-label">
+                  Starting from
                 </div>
+                <div className="qr-start-value">
+                  {startSettled && <span className="qr-ready-mark" aria-hidden="true">✓</span>}
+                  {startSummaryLabel}
+                </div>
+              </div>
+              <button type="button" className="qr-text-btn" onClick={() => setStartOpen(true)}>
+                Change
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="qr-start-expanded-head">
+                <div id="qr-start-label" className="qr-section-label">
+                  Starting from
+                </div>
+                {startSettled && (
+                  <button type="button" className="qr-text-btn" onClick={() => setStartOpen(false)}>
+                    Done
+                  </button>
+                )}
+              </div>
+              <div className="qr-start-chips" role="group" aria-label="Starting point">
+                {(["location", "station", "custom"] as StartMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className={`qr-start-chip${startMode === mode ? " is-active" : ""}`}
+                    onClick={() => setStartMode(mode)}
+                    aria-pressed={startMode === mode}
+                  >
+                    {START_MODE_LABEL[mode]}
+                  </button>
+                ))}
+              </div>
+
+              {startMode === "station" && (
+                <select
+                  value={stationId}
+                  onChange={(e) => setStationId(e.target.value)}
+                  aria-label="Home station"
+                >
+                  {STATIONS.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} — {s.address}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              {startMode === "location" && (
+                <>
+                  <div className="qr-start-location">
+                    {locatedCoords ? (
+                      <div className="qr-start-value" title={locatedLabel}>
+                        <span className="qr-ready-mark" aria-hidden="true">✓</span>
+                        Current location
+                      </div>
+                    ) : (
+                      <span className="text-muted">
+                        {locating ? "Finding your location…" : "Location not yet available"}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => handleLocate()}
+                      disabled={locating}
+                    >
+                      {locating ? (
+                        <>
+                          <span className="spinner" /> Finding…
+                        </>
+                      ) : locatedCoords ? (
+                        "Update location"
+                      ) : (
+                        "Use my location"
+                      )}
+                    </button>
+                  </div>
+                  {locationError && (
+                    <div className="qr-error" role="alert">
+                      {locationError}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {startMode === "custom" && (
+                <AddressAutocomplete
+                  value={customAddress}
+                  onChange={(v) => {
+                    setCustomAddress(v);
+                    if (customSelectRef.current === v) {
+                      customSelectRef.current = null;
+                      return;
+                    }
+                    setCustomStartCoords(null);
+                  }}
+                  onSelect={(suggestion) => {
+                    customSelectRef.current = suggestion.displayName;
+                    setCustomAddress(suggestion.displayName);
+                    if (
+                      suggestion.lat !== undefined &&
+                      suggestion.lng !== undefined &&
+                      Number.isFinite(suggestion.lat) &&
+                      Number.isFinite(suggestion.lng) &&
+                      !(suggestion.lat === 0 && suggestion.lng === 0)
+                    ) {
+                      setCustomStartCoords({ lat: suggestion.lat, lng: suggestion.lng });
+                    } else {
+                      setCustomStartCoords(null);
+                    }
+                  }}
+                  placeholder="Your home address, any city"
+                  serviceAreaOnly={false}
+                  near={customStartBias}
+                  style={{ width: "100%" }}
+                />
               )}
             </>
           )}
+        </section>
 
-          {startMode === "custom" && (
-            <AddressAutocomplete
-              value={customAddress}
-              onChange={(v) => {
-                setCustomAddress(v);
-                if (customSelectRef.current === v) {
-                  customSelectRef.current = null;
-                  return;
-                }
-                setCustomStartCoords(null);
-              }}
-              onSelect={(suggestion) => {
-                customSelectRef.current = suggestion.displayName;
-                setCustomAddress(suggestion.displayName);
-                if (
-                  suggestion.lat !== undefined &&
-                  suggestion.lng !== undefined &&
-                  Number.isFinite(suggestion.lat) &&
-                  Number.isFinite(suggestion.lng) &&
-                  !(suggestion.lat === 0 && suggestion.lng === 0)
-                ) {
-                  setCustomStartCoords({ lat: suggestion.lat, lng: suggestion.lng });
-                } else {
-                  setCustomStartCoords(null);
-                }
-              }}
-              placeholder="Your home address, any city"
-              serviceAreaOnly={false}
-              near={customStartBias}
-              style={{ width: "100%", marginTop: ".75rem" }}
-            />
+        <section className="qr-section qr-add" aria-labelledby="qr-add-label">
+          <h2 id="qr-add-label" className="qr-section-heading">
+            Add stops
+          </h2>
+          {isEmptyFlow && (
+            <p className="qr-section-copy">
+              Paste a list, speak them, or add addresses one at a time.
+            </p>
           )}
-        </div>
 
-        {/* ── Address list ─────────────────────────────────── */}
-        <div className="card" style={{ marginBottom: "1.25rem" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: ".75rem" }}>
-            <div style={{ fontWeight: 700, fontSize: ".8rem", letterSpacing: ".06em", textTransform: "uppercase", color: "var(--text-muted)" }}>
-              Stops {filledStops.length > 0 && <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>({filledStops.length})</span>}
+          <BatchEntryPanel
+            transcript={transcript}
+            onTranscriptChange={setTranscript}
+            onAppendFinal={(text) => setTranscript((prev) => appendTranscript(prev, text))}
+            clearExisting={clearExisting}
+            onClearExistingChange={setClearExisting}
+            resolving={resolvingBatch}
+            onResolve={() => void handleResolveBatch()}
+            collapsed={!batchOpen && !isEmptyFlow}
+            onExpand={() => setBatchOpen(true)}
+            onCollapse={() => setBatchOpen(false)}
+            resolveError={batchResolveError}
+            hasStops={!isEmptyFlow}
+          />
+
+          {batchCountError && (
+            <p className="qr-error" role="alert">
+              {batchCountError}
+            </p>
+          )}
+
+          {filledStops.length > 0 && (
+            <div className="qr-summary" role="status">
+              {readiness.readyToRoute ? (
+                <>
+                  <div className="qr-summary-lead">
+                    <span className="qr-ready-mark" aria-hidden="true">✓</span>
+                    {readiness.total} stop{readiness.total === 1 ? "" : "s"} ready
+                  </div>
+                  <p>Everything looks good.</p>
+                </>
+              ) : (
+                <>
+                  <div className="qr-summary-lead">{readiness.total} stops</div>
+                  <div className="qr-summary-line is-ready">
+                    <span aria-hidden="true">✓</span> {readyCount} ready
+                  </div>
+                  <div className="qr-summary-line is-attention">
+                    <span aria-hidden="true">!</span> {readiness.attentionCount} need attention
+                  </div>
+                  <p>
+                    Fix {readiness.attentionCount === 1 ? "this stop" : `these ${readiness.attentionCount} stops`} to
+                    continue.
+                  </p>
+                </>
+              )}
+              <details className="qr-details">
+                <summary>Details</summary>
+                <ul>
+                  <li>{readiness.providerVerified} checked automatically</li>
+                  <li>{readiness.manuallyVerified} pinned by you</li>
+                  <li>{readiness.needsReview} check this</li>
+                  <li>{readiness.unresolved} need a location</li>
+                  {batchSummary && (
+                    <li>
+                      Counted {readiness.accountedFor} of {batchSummary.parsed}
+                      {readiness.ok && batchSummary.ok ? "" : " — mismatch"}
+                    </li>
+                  )}
+                </ul>
+              </details>
             </div>
-            <button
-              type="button"
-              onClick={() => setShowBatch((v) => !v)}
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "var(--brand)",
-                fontWeight: 600,
-                fontSize: ".82rem",
-                cursor: "pointer",
-                padding: ".35rem .3rem",
-                minHeight: 44,
-              }}
-            >
-              {showBatch ? "Close batch entry" : "Paste / dictate"}
-            </button>
-          </div>
-
-          {showBatch && (
-            <BatchEntryPanel
-              transcript={transcript}
-              onTranscriptChange={setTranscript}
-              onAppendFinal={(text) => setTranscript((prev) => appendTranscript(prev, text))}
-              clearExisting={clearExisting}
-              onClearExistingChange={setClearExisting}
-              resolving={resolvingBatch}
-              onResolve={() => void handleResolveBatch()}
-              onCancel={() => setShowBatch(false)}
-              summary={batchSummary}
-              countError={batchCountError}
-              resolveError={batchResolveError}
-              filledStops={filledStops}
-              duplicates={duplicates}
-              verifiedExpanded={verifiedExpanded}
-              onVerifiedExpandedChange={setVerifiedExpanded}
-              onConfirmCandidate={handleConfirmCandidate}
-              onSearchEdit={handleSearchEdit}
-              onResolveAgain={(id) => void handleResolveAgain(id)}
-              resolvingStopId={resolvingStopId}
-              onKeepDuplicate={handleKeepDuplicate}
-              onRemoveDuplicate={handleRemoveDuplicate}
-              onAcceptCorrection={handleAcceptCorrection}
-              onSetLocationOnMap={setPinStopId}
-            />
           )}
 
-          {/* Individual stop inputs */}
-          <div style={{ display: "flex", flexDirection: "column", gap: ".65rem" }}>
-            {stops.map((stop, idx) => {
-              const filled = stopIsFilled(stop);
-              const confirmable = confirmableCandidates(stop.reviewCandidates ?? [], matchInputFor(stop));
-              const duplicate = duplicates.find((d) => d.stopId === stop.id);
-              return (
-                <div key={stop.id}>
-                  <div style={{ display: "flex", alignItems: "center", gap: ".5rem" }}>
-                    <div
-                      style={{
-                        width: 26,
-                        height: 26,
-                        borderRadius: "50%",
-                        background: stop.verificationStatus === "verified" ? "#16a34a" : stop.address.trim() ? "var(--brand)" : "var(--border)",
-                        color: stop.address.trim() ? "#fff" : "var(--text-muted)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: 11,
-                        fontWeight: 800,
-                        flexShrink: 0,
-                        userSelect: "none",
-                        transition: "background .15s, color .15s",
-                      }}
-                    >
-                      {idx + 1}
+          {attentionStops.length > 0 && (
+            <div className="qr-attention">
+              <div className="qr-attention-heading">
+                Needs attention
+                <span className="qr-attention-count">
+                  {attentionStops.length} stop{attentionStops.length === 1 ? "" : "s"}
+                </span>
+              </div>
+              {attentionStops.map((stop) => {
+                const matchInput = matchInputFor(stop);
+                const confirmable = confirmableCandidates(stop.reviewCandidates ?? [], matchInput);
+                const duplicate = duplicateByStop.get(stop.id);
+                const editing = editingStopId === stop.id;
+                const label = stop.searchInput || stop.rawInput || stop.address;
+                return (
+                  <div key={stop.id} className="qr-exception-card">
+                    <div className="qr-exception-head">
+                      <div className="qr-exception-address">{label}</div>
+                      <RemoveStopButton
+                        disabled={stops.length <= 1}
+                        onClick={() => removeStop(stop.id)}
+                      />
                     </div>
+                    {stop.verificationStatus === "unresolved" && (
+                      <p className="qr-exception-help">{friendlyUnresolvedMessage(stop.unresolvedReason)}</p>
+                    )}
+                    {stop.verificationStatus === "needs_review" && confirmable.length === 0 && !stop.suggestedCorrection && (
+                      <p className="qr-exception-help">{stopStatusDetail(stop)}</p>
+                    )}
+                    {stop.suggestedCorrection && (
+                      <div className="qr-exception-block">
+                        <p className="qr-exception-help">Did you mean:</p>
+                        <div className="qr-candidate-name">
+                          {stop.suggestedCorrection.candidate.displayName}
+                        </div>
+                        <button
+                          type="button"
+                          className="qr-action-btn qr-action-btn--primary"
+                          onClick={() => handleAcceptCorrection(stop.id)}
+                        >
+                          Use this address
+                        </button>
+                      </div>
+                    )}
+                    {confirmable.length > 0 && (
+                      <div className="qr-exception-block">
+                        <p className="qr-exception-help">Is this the right address?</p>
+                        {confirmable.map((candidate) => (
+                          <button
+                            key={candidate.placeId}
+                            type="button"
+                            className="qr-candidate-btn"
+                            onClick={() => handleConfirmCandidate(stop.id, candidate)}
+                          >
+                            <span className="qr-candidate-name">{candidate.displayName}</span>
+                            <span>Yes, use this</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {duplicate && (
+                      <DuplicatePrompt
+                        onKeep={() => handleKeepDuplicate(stop.id)}
+                        onRemove={() => handleRemoveDuplicate(stop.id)}
+                      />
+                    )}
+                    <div className="qr-exception-actions">
+                      <button
+                        type="button"
+                        className="qr-action-btn"
+                        onClick={() => void handleResolveAgain(stop.id)}
+                        disabled={resolvingStopId === stop.id}
+                      >
+                        {resolvingStopId === stop.id ? "Checking…" : "Try again"}
+                      </button>
+                      {stopAllowsManualPin(stop) && (
+                        <button
+                          type="button"
+                          className="qr-action-btn qr-action-btn--primary"
+                          onClick={() => setPinStopId(stop.id)}
+                        >
+                          Pin on map
+                        </button>
+                      )}
+                    </div>
+                    {editing ? (
+                      <div className="qr-exception-edit">
+                        <AddressAutocomplete
+                          ref={(el) => registerRef(stop.id, el)}
+                          value={stop.address}
+                          onChange={(v) => handleSearchEdit(stop.id, v)}
+                          onSelect={(suggestion, rawInput) => handleStopSelect(stop.id, suggestion, rawInput)}
+                          onSuggestionsChange={(suggestions) => handleSuggestionsChange(stop.id, suggestions)}
+                          placeholder="Edit address"
+                          near={stopAutocompleteBias}
+                          city={QUICK_ROUTE_SERVICE_AREA.city}
+                          state={QUICK_ROUTE_SERVICE_AREA.state}
+                        />
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="qr-text-btn qr-edit-address"
+                        onClick={() => setEditingStopId(stop.id)}
+                      >
+                        Edit address
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {readyStops.length > 0 && (
+            <div className="qr-ready-block">
+              {attentionStops.length > 0 ? (
+                <button
+                  type="button"
+                  className="batch-verified-toggle"
+                  onClick={() => setVerifiedExpanded(!verifiedExpanded)}
+                  aria-expanded={verifiedExpanded}
+                >
+                  <span className="qr-ready-mark" aria-hidden="true">✓</span>
+                  {readyStops.length} stop{readyStops.length === 1 ? "" : "s"} ready
+                  <span className="qr-ready-toggle-hint">{verifiedExpanded ? "Hide" : "Show"}</span>
+                </button>
+              ) : null}
+              {(attentionStops.length === 0 || verifiedExpanded) &&
+                readyStops.map((stop) => {
+                  const idx = stops.findIndex((s) => s.id === stop.id);
+                  const duplicate = duplicateByStop.get(stop.id);
+                  const pinned = stop.verificationMethod === "manual_pin";
+                  const detail = diagnosticStatusDetail(stop);
+                  return (
+                    <div key={stop.id} className="qr-ready-row-wrap">
+                      <div className="qr-ready-row">
+                        <div className="qr-stop-num" aria-hidden="true">
+                          {idx + 1}
+                        </div>
+                        <AddressAutocomplete
+                          ref={(el) => registerRef(stop.id, el)}
+                          value={stop.address}
+                          onChange={(v) => updateStop(stop.id, v)}
+                          onSelect={(suggestion, rawInput) => handleStopSelect(stop.id, suggestion, rawInput)}
+                          onSuggestionsChange={(suggestions) => handleSuggestionsChange(stop.id, suggestions)}
+                          onKeyDown={(e) => handleStopKeyDown(e, stop.id)}
+                          placeholder={`Address ${idx + 1}`}
+                          near={stopAutocompleteBias}
+                          city={QUICK_ROUTE_SERVICE_AREA.city}
+                          state={QUICK_ROUTE_SERVICE_AREA.state}
+                        />
+                        <span
+                          className={`qr-ready-mark${pinned ? " is-pinned" : ""}`}
+                          title={detail ?? "Ready"}
+                        >
+                          ✓{pinned ? " pinned" : ""}
+                        </span>
+                        <RemoveStopButton
+                          disabled={stops.length <= 1}
+                          onClick={() => removeStop(stop.id)}
+                        />
+                      </div>
+                      {stopAllowsAdjustPin(stop) && (
+                        <button
+                          type="button"
+                          className="qr-text-btn"
+                          onClick={() => setPinStopId(stop.id)}
+                        >
+                          Adjust pin
+                        </button>
+                      )}
+                      {duplicate && (
+                        <DuplicatePrompt
+                          onKeep={() => handleKeepDuplicate(stop.id)}
+                          onRemove={() => handleRemoveDuplicate(stop.id)}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+
+          <div className="qr-one-at-a-time">
+            {!isEmptyFlow && <div className="qr-one-at-a-time-label">or add one at a time</div>}
+            <div className="qr-empty-rows">
+              {workingStops.map((stop) => {
+                const idx = stops.findIndex((s) => s.id === stop.id);
+                const duplicate = duplicateByStop.get(stop.id);
+                return (
+                  <div key={stop.id} className="qr-ready-row-wrap">
+                    <div className="qr-empty-row">
+                      <div className="qr-stop-num is-empty" aria-hidden="true">
+                        {idx + 1}
+                      </div>
+                      <AddressAutocomplete
+                        ref={(el) => registerRef(stop.id, el)}
+                        value={stop.address}
+                        onChange={(v) => updateStop(stop.id, v)}
+                        onSelect={(suggestion, rawInput) => handleStopSelect(stop.id, suggestion, rawInput)}
+                        onSuggestionsChange={(suggestions) => handleSuggestionsChange(stop.id, suggestions)}
+                        onKeyDown={(e) => handleStopKeyDown(e, stop.id)}
+                        placeholder={`Address ${idx + 1}`}
+                        near={stopAutocompleteBias}
+                        city={QUICK_ROUTE_SERVICE_AREA.city}
+                        state={QUICK_ROUTE_SERVICE_AREA.state}
+                      />
+                      <RemoveStopButton
+                        disabled={stops.length <= 1}
+                        onClick={() => removeStop(stop.id)}
+                      />
+                    </div>
+                    {stopAllowsManualPin(stop) && (
+                      <button
+                        type="button"
+                        className="qr-text-btn"
+                        onClick={() => setPinStopId(stop.id)}
+                      >
+                        Pin on map
+                      </button>
+                    )}
+                    {duplicate && (
+                      <DuplicatePrompt
+                        onKeep={() => handleKeepDuplicate(stop.id)}
+                        onRemove={() => handleRemoveDuplicate(stop.id)}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+              {emptyStops.map((stop) => {
+                const idx = stops.findIndex((s) => s.id === stop.id);
+                return (
+                  <div key={stop.id} className="qr-empty-row">
+                    {!isEmptyFlow && (
+                      <div className="qr-stop-num is-empty" aria-hidden="true">
+                        {idx + 1}
+                      </div>
+                    )}
                     <AddressAutocomplete
                       ref={(el) => registerRef(stop.id, el)}
                       value={stop.address}
@@ -796,288 +1146,91 @@ export function QuickRoutePage() {
                       onSelect={(suggestion, rawInput) => handleStopSelect(stop.id, suggestion, rawInput)}
                       onSuggestionsChange={(suggestions) => handleSuggestionsChange(stop.id, suggestions)}
                       onKeyDown={(e) => handleStopKeyDown(e, stop.id)}
-                      placeholder={`Address ${idx + 1}`}
+                      placeholder={isEmptyFlow ? "Add an address" : `Address ${idx + 1}`}
                       near={stopAutocompleteBias}
                       city={QUICK_ROUTE_SERVICE_AREA.city}
                       state={QUICK_ROUTE_SERVICE_AREA.state}
                     />
-                    <button
-                      type="button"
-                      title="Remove stop"
-                      onClick={() => removeStop(stop.id)}
+                    <RemoveStopButton
                       disabled={stops.length <= 1}
-                      style={{
-                        width: 30,
-                        height: 30,
-                        borderRadius: "50%",
-                        border: "1.5px solid var(--border)",
-                        background: "transparent",
-                        color: stops.length <= 1 ? "var(--text-meta)" : "var(--text-muted)",
-                        cursor: stops.length <= 1 ? "default" : "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: 16,
-                        lineHeight: 1,
-                        flexShrink: 0,
-                      }}
-                    >
-                      ×
-                    </button>
+                      onClick={() => removeStop(stop.id)}
+                    />
                   </div>
-                  {filled && (() => {
-                    const copy = verificationSourceCopy(stop);
-                    return (
-                      <div
-                        className={`quick-route-verify-badge quick-route-verify-${stop.verificationStatus}${stop.verificationMethod === "manual_pin" ? " is-manual" : ""}`}
-                        style={{ marginLeft: 34, marginTop: ".28rem" }}
-                      >
-                        <div>{copy.title}</div>
-                        {copy.detail && <div className="quick-route-verify-source">{copy.detail}</div>}
-                        {stop.verificationStatus === "verified" && stop.address !== stop.rawInput && (
-                          <span className="quick-route-verify-canonical">{stop.address}</span>
-                        )}
-                      </div>
-                    );
-                  })()}
-                  {filled && stop.verificationStatus === "needs_review" && (
-                    <div className="quick-route-review-panel">
-                      {stop.suggestedCorrection && (
-                        <div className="quick-route-correction">
-                          <div className="quick-route-review-hint">{stop.suggestedCorrection.explanation}</div>
-                          <button
-                            type="button"
-                            className="quick-route-review-option"
-                            onClick={() => handleAcceptCorrection(stop.id)}
-                          >
-                            Use suggested address: {stop.suggestedCorrection.candidate.displayName}
-                          </button>
-                        </div>
-                      )}
-                      {confirmable.length > 0 ? (
-                        <>
-                          <div className="quick-route-review-hint">Choose the correct address:</div>
-                          {confirmable.map((candidate) => (
-                            <button
-                              key={candidate.placeId}
-                              type="button"
-                              className="quick-route-review-option"
-                              onClick={() => handleConfirmCandidate(stop.id, candidate)}
-                            >
-                              {candidate.displayName}
-                            </button>
-                          ))}
-                        </>
-                      ) : !stop.suggestedCorrection ? (
-                        <div className="quick-route-review-hint">
-                          No matching South Bend 46613/46614 candidate yet. Edit the address, pick a suggestion, or set the location on the map.
-                        </div>
-                      ) : null}
-                      <button
-                        type="button"
-                        className="batch-action-btn"
-                        onClick={() => void handleResolveAgain(stop.id)}
-                        disabled={resolvingStopId === stop.id}
-                      >
-                        {resolvingStopId === stop.id ? "Resolving…" : "Resolve again"}
-                      </button>
-                      {stopAllowsManualPin(stop) && (
-                        <button
-                          type="button"
-                          className="batch-action-btn"
-                          onClick={() => setPinStopId(stop.id)}
-                        >
-                          Set location on map
-                        </button>
-                      )}
-                    </div>
-                  )}
-                  {filled && stop.verificationStatus === "unresolved" && (
-                    <div className="quick-route-review-hint" style={{ marginLeft: 34 }}>
-                      {stop.unresolvedReason ?? "Could not resolve this address. Pick a suggestion, edit the text, or set the location on the map."}
-                      <div>
-                        <button
-                          type="button"
-                          className="batch-action-btn"
-                          onClick={() => void handleResolveAgain(stop.id)}
-                          disabled={resolvingStopId === stop.id}
-                        >
-                          {resolvingStopId === stop.id ? "Resolving…" : "Resolve again"}
-                        </button>
-                        {stopAllowsManualPin(stop) && (
-                          <button
-                            type="button"
-                            className="batch-action-btn"
-                            onClick={() => setPinStopId(stop.id)}
-                          >
-                            Set location on map
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                  {filled && stopAllowsAdjustPin(stop) && (
-                    <div style={{ marginLeft: 34 }}>
-                      <button
-                        type="button"
-                        className="batch-action-btn"
-                        onClick={() => setPinStopId(stop.id)}
-                      >
-                        Adjust pin
-                      </button>
-                    </div>
-                  )}
-                  {filled && duplicate && (
-                    <div className="batch-duplicate" style={{ marginLeft: 34 }}>
-                      <span>{duplicate.reason}</span>
-                      <div className="batch-duplicate-actions">
-                        <button type="button" className="batch-action-btn" onClick={() => handleKeepDuplicate(stop.id)}>
-                          Keep both
-                        </button>
-                        <button type="button" className="batch-action-btn" onClick={() => handleRemoveDuplicate(stop.id)}>
-                          Remove duplicate
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
+            {!isEmptyFlow && (
+              <button
+                ref={addStopRef}
+                type="button"
+                className="qr-add-stop"
+                onClick={addStop}
+              >
+                Add another stop
+              </button>
+            )}
+          </div>
+        </section>
+
+        <section className="qr-section qr-cta" aria-labelledby="qr-cta-label">
+          {error && (
+            <div className="qr-error" role="alert">
+              {error}
+            </div>
+          )}
+
+          <div className="qr-readiness" role="status" id="qr-cta-label">
+            {filledStops.length === 0 ? (
+              <p>Add a few stops to build a route.</p>
+            ) : readiness.readyToRoute ? (
+              <p className="qr-readiness-ok">
+                <span className="qr-ready-mark" aria-hidden="true">✓</span>
+                {readiness.total} stop{readiness.total === 1 ? "" : "s"} ready
+              </p>
+            ) : (
+              <p>
+                {readiness.attentionCount} stop{readiness.attentionCount === 1 ? "" : "s"} still need attention
+              </p>
+            )}
           </div>
 
           <button
-            ref={addStopRef}
-            type="button"
-            onClick={addStop}
-            style={{
-              marginTop: ".75rem",
-              display: "flex",
-              alignItems: "center",
-              gap: ".4rem",
-              background: "transparent",
-              border: "1.5px dashed var(--border)",
-              borderRadius: "var(--radius)",
-              color: "var(--brand)",
-              fontWeight: 600,
-              fontSize: ".875rem",
-              padding: ".45rem .85rem",
-              cursor: "pointer",
-              width: "100%",
-              justifyContent: "center",
-              minHeight: 44,
-            }}
+            className="btn-primary qr-create-route"
+            disabled={!canSubmit}
+            onClick={() => void handleSubmit()}
+            aria-describedby="qr-cta-label"
           >
-            + Add stop
+            {loading ? (
+              <>
+                <span className="spinner" /> Building your route…
+              </>
+            ) : (
+              "Create route"
+            )}
           </button>
-        </div>
+        </section>
 
-        {/* ── Submit ─────────────────────────────────────────── */}
-        {error && (
-          <div style={{ color: "#dc2626", fontSize: ".9rem", marginBottom: "1rem" }}>{error}</div>
-        )}
-
-        {batchCountError && (
-          <p style={{ color: "#dc2626", fontSize: ".82rem", marginTop: ".75rem", marginBottom: ".5rem" }}>
-            {batchCountError}
-          </p>
-        )}
-
-        {filledStops.length > 0 && (
-          <div className="route-readiness" role="status">
-            <div className="route-readiness-total">{readiness.total} address{readiness.total === 1 ? "" : "es"}</div>
-            <div className="batch-summary-row ok">{readiness.providerVerified} provider verified</div>
-            <div className="batch-summary-row ok">{readiness.manuallyVerified} manually verified</div>
-            <div className="batch-summary-row review">{readiness.needsReview} need review</div>
-            <div className="batch-summary-row unresolved">{readiness.unresolved} unresolved</div>
-            <div className="route-readiness-status">
-              {readiness.readyToRoute
-                ? "Ready to route"
-                : `${readiness.attentionCount} address${readiness.attentionCount === 1 ? "" : "es"} still need attention`}
-            </div>
-          </div>
-        )}
-
-        {hasUnverifiedStops && filledStops.length > 0 && (
-          <p className="text-muted" style={{ fontSize: ".82rem", marginTop: ".75rem", marginBottom: ".5rem" }}>
-            Verify every stop before generating a route. Unresolved and needs-review stops stay blocked.
-          </p>
-        )}
-
-        <button
-          className="btn-primary"
-          style={{ width: "100%", fontSize: "1rem", padding: ".75rem" }}
-          disabled={!canSubmit}
-          onClick={() => void handleSubmit()}
-        >
-          {loading ? (
-            <><span className="spinner" /> Optimizing route…</>
-          ) : (
-            `Generate optimal route →`
-          )}
-        </button>
-
-        {loading && (
-          <p className="text-muted" style={{ fontSize: ".82rem", marginTop: ".5rem", textAlign: "center" }}>
-            Optimizing {filledStops.length} verified stops — may take a few seconds.
-          </p>
-        )}
-
-        {/* ── Results ──────────────────────────────────────── */}
         {result && (
-          <div style={{ marginTop: "2rem" }} ref={resultRef}>
-
-            {/* Summary bar */}
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(3, 1fr)",
-                gap: "1px",
-                background: "var(--border)",
-                borderRadius: "var(--radius)",
-                overflow: "hidden",
-                marginBottom: "1.25rem",
-              }}
-            >
+          <div className="qr-results" ref={resultRef}>
+            <div className="qr-result-stats">
               {[
                 { label: "Stops", value: String(result.route.length) },
                 { label: "Drive time", value: formatDuration(result.summary.estimatedDriveSeconds) },
                 { label: "Distance", value: `${result.summary.estimatedDriveMiles} mi` },
               ].map(({ label, value }) => (
-                <div key={label} style={{ background: "var(--surface)", padding: ".75rem 1rem", textAlign: "center" }}>
-                  <div style={{ fontSize: "1.3rem", fontWeight: 800, color: "var(--brand)" }}>{value}</div>
-                  <div style={{ fontSize: ".78rem", color: "var(--text-muted)", marginTop: ".1rem" }}>{label}</div>
+                <div key={label} className="qr-result-stat">
+                  <div className="qr-result-stat-value">{value}</div>
+                  <div className="qr-result-stat-label">{label}</div>
                 </div>
               ))}
             </div>
 
-            {/* Navigate buttons */}
-            <div
-              style={{
-                display: "flex",
-                gap: ".6rem",
-                flexWrap: "wrap",
-                marginBottom: "1.25rem",
-              }}
-            >
+            <div className="qr-nav-actions">
               <a
                 href={buildGoogleMapsUrl(result)}
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{
-                  flex: "1 1 160px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: ".4rem",
-                  background: "#1a73e8",
-                  color: "#fff",
-                  fontWeight: 700,
-                  fontSize: ".9rem",
-                  padding: ".65rem 1rem",
-                  borderRadius: "var(--radius)",
-                  textDecoration: "none",
-                  whiteSpace: "nowrap",
-                }}
+                className="qr-nav-link qr-nav-link--gmaps"
               >
                 Open in Google Maps
               </a>
@@ -1085,94 +1238,35 @@ export function QuickRoutePage() {
                 href={buildWazeUrl(result)}
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{
-                  flex: "1 1 120px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: ".4rem",
-                  background: "#33ccff",
-                  color: "#1a1a2e",
-                  fontWeight: 700,
-                  fontSize: ".9rem",
-                  padding: ".65rem 1rem",
-                  borderRadius: "var(--radius)",
-                  textDecoration: "none",
-                  whiteSpace: "nowrap",
-                }}
+                className="qr-nav-link qr-nav-link--waze"
               >
                 Open in Waze
               </a>
-              <button
-                type="button"
-                onClick={() => void handleCopyList()}
-                style={{
-                  flex: "1 1 120px",
-                  background: "var(--surface)",
-                  border: "1.5px solid var(--border)",
-                  color: copied ? "#16a34a" : "var(--text)",
-                  fontWeight: 600,
-                  fontSize: ".9rem",
-                  padding: ".65rem 1rem",
-                  borderRadius: "var(--radius)",
-                  cursor: "pointer",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {copied ? "✓ Copied!" : "Copy stop list"}
+              <button type="button" className="qr-nav-copy" onClick={() => void handleCopyList()}>
+                {copied ? "Copied" : "Copy stop list"}
               </button>
             </div>
 
-            {/* Map */}
-            <div className="card" style={{ padding: 0, overflow: "hidden", marginBottom: "1.25rem" }}>
+            <div className="qr-map-wrap">
               <QuickRouteMap result={result} height={340} />
             </div>
 
-            {/* Ordered stop list */}
-            <div className="card" style={{ marginBottom: "1.25rem" }}>
-              <div style={{ fontWeight: 700, fontSize: ".8rem", letterSpacing: ".06em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: "1rem" }}>
-                Optimized stop order
-              </div>
+            <div className="qr-stop-order">
+              <div className="qr-section-label">Your route</div>
 
-              {/* Depot row */}
-              <div
-                style={{
-                  display: "flex",
-                  gap: ".75rem",
-                  alignItems: "flex-start",
-                  paddingBottom: ".75rem",
-                  marginBottom: ".75rem",
-                  borderBottom: "1px solid var(--row-border)",
-                }}
-              >
-                <div
-                  style={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: 4,
-                    background: "#004b87",
-                    color: "#fff",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: 9,
-                    fontWeight: 800,
-                    flexShrink: 0,
-                    letterSpacing: ".03em",
-                  }}
-                >
+              <div className="qr-order-row">
+                <div className="qr-order-go" aria-hidden="true">
                   GO
                 </div>
                 <div>
-                  <div style={{ fontWeight: 600, fontSize: ".875rem" }}>Start</div>
-                  <div className="text-muted" style={{ fontSize: ".8rem" }}>{result.start.address}</div>
+                  <div className="qr-order-title">Start</div>
+                  <div className="text-muted qr-order-sub">{result.start.address}</div>
                 </div>
               </div>
 
               {result.route.map((step, idx) => {
                 const mins = Math.round(step.driveSecondsFromPrevious / 60);
                 const isLast = idx === result.route.length - 1;
-                // Build a single-stop Google Maps link for this stop
                 const stopNavUrl = googleMapsStopUrl({
                   lat: step.stops[0]?.lat ?? 0,
                   lng: step.stops[0]?.lng ?? 0,
@@ -1181,72 +1275,33 @@ export function QuickRoutePage() {
                 return (
                   <div
                     key={step.clusterId}
-                    style={{
-                      display: "flex",
-                      gap: ".75rem",
-                      alignItems: "flex-start",
-                      paddingBottom: isLast ? 0 : ".75rem",
-                      marginBottom: isLast ? 0 : ".75rem",
-                      borderBottom: isLast ? "none" : "1px solid var(--row-border)",
-                    }}
+                    className={`qr-order-row${isLast ? " is-last" : ""}`}
                   >
-                    <div
-                      style={{
-                        width: 28,
-                        height: 28,
-                        borderRadius: "50%",
-                        background: "var(--brand)",
-                        color: "#fff",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: 11,
-                        fontWeight: 800,
-                        flexShrink: 0,
-                      }}
-                    >
+                    <div className="qr-stop-num is-brand" aria-hidden="true">
                       {step.sequence}
                     </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="qr-order-body">
                       {step.stops.map((s, i) => (
                         <div
                           key={i}
-                          style={{
-                            fontSize: ".875rem",
-                            fontWeight: i === 0 ? 600 : 400,
-                            color: i === 0 ? "var(--text)" : "var(--text-secondary)",
-                            marginBottom: i < step.stops.length - 1 ? ".15rem" : 0,
-                          }}
+                          className={i === 0 ? "qr-order-title" : "qr-order-sub"}
                         >
                           {s.address}
                         </div>
                       ))}
                       {step.alerts.length > 0 && (
-                        <div style={{ fontSize: ".78rem", color: "#d97706", marginTop: ".2rem" }}>
-                          ⚠ {step.alerts.join(" · ")}
-                        </div>
+                        <div className="qr-order-alert">⚠ {step.alerts.join(" · ")}</div>
                       )}
                     </div>
-                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: ".2rem", flexShrink: 0 }}>
-                      <div style={{ fontSize: ".8rem", color: "var(--text-muted)", textAlign: "right" }}>
+                    <div className="qr-order-meta">
+                      <div className="text-muted">
                         {mins > 0 && <span>{mins} min</span>}
                         {step.driveMilesFromPrevious > 0 && (
-                          <div style={{ fontSize: ".75rem" }}>{step.driveMilesFromPrevious} mi</div>
+                          <div>{step.driveMilesFromPrevious} mi</div>
                         )}
                       </div>
-                      <a
-                        href={stopNavUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{
-                          fontSize: ".75rem",
-                          color: "var(--brand)",
-                          fontWeight: 600,
-                          textDecoration: "none",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        Navigate →
+                      <a href={stopNavUrl} target="_blank" rel="noopener noreferrer">
+                        Navigate
                       </a>
                     </div>
                   </div>
@@ -1254,13 +1309,7 @@ export function QuickRoutePage() {
               })}
             </div>
 
-            {/* Plan another route */}
-            <button
-              type="button"
-              className="btn-secondary"
-              style={{ width: "100%" }}
-              onClick={handleClearAll}
-            >
+            <button type="button" className="btn-secondary qr-create-route" onClick={handleClearAll}>
               Plan another route
             </button>
           </div>
