@@ -19,17 +19,23 @@ export type AddressConfidence =
 export interface AddressSuggestion {
   placeId: string;
   displayName: string;
-  lat: number;
-  lng: number;
+  lat?: number;
+  lng?: number;
   confidence: AddressConfidence;
   rankReason: string;
   distanceMeters?: number;
+  city?: string;
+  state?: string;
+  zip?: string;
+  houseNumber?: string;
+  street?: string;
 }
 
 interface AddressAutocompleteProps {
   value: string;
   onChange: (value: string) => void;
-  onSelect?: (suggestion: AddressSuggestion) => void;
+  onSelect?: (suggestion: AddressSuggestion, rawInput: string) => void;
+  onSuggestionsChange?: (suggestions: AddressSuggestion[]) => void;
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
   placeholder?: string;
   style?: React.CSSProperties;
@@ -71,7 +77,7 @@ function shouldFetch(q: string): boolean {
 
 export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompleteProps>(
   function AddressAutocomplete(
-    { value, onChange, onSelect, onKeyDown, placeholder, style, near, city, state, serviceAreaOnly = true },
+    { value, onChange, onSelect, onSuggestionsChange, onKeyDown, placeholder, style, near, city, state, serviceAreaOnly = true },
     ref
   ) {
     const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([]);
@@ -141,6 +147,7 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
           setSuggestions(data.suggestions);
           setIsOpen(data.suggestions.length > 0);
           setActiveIdx(data.suggestions.length > 0 ? 0 : -1);
+          onSuggestionsChange?.(data.suggestions);
         } catch (err) {
           if (err instanceof DOMException && err.name === "AbortError") return;
           if (fetchId === fetchIdRef.current && latestQueryRef.current === q) {
@@ -156,7 +163,7 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
           }
         }
       },
-      [near, city, state, serviceAreaOnly]
+      [near, city, state, serviceAreaOnly, onSuggestionsChange]
     );
 
     const handleChange = useCallback(
@@ -183,9 +190,10 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
 
     const selectSuggestion = useCallback(
       (s: AddressSuggestion) => {
+        const rawInput = value;
         cancelInFlight();
+        onSelect?.(s, rawInput);
         onChange(s.displayName);
-        onSelect?.(s);
         setSuggestions([]);
         setIsOpen(false);
         setActiveIdx(-1);
@@ -195,7 +203,7 @@ export const AddressAutocomplete = forwardRef<HTMLInputElement, AddressAutocompl
           });
         }
       },
-      [onChange, onSelect, cancelInFlight]
+      [onChange, onSelect, cancelInFlight, value]
     );
 
     const handleKeyDown = useCallback(

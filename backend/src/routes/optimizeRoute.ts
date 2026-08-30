@@ -1,14 +1,19 @@
 import { Router, Request, Response, NextFunction } from "express";
-import { geocodeAll } from "../services/geocoder.js";
+import { geocodeStartAddress } from "../services/geocoder.js";
 import { clusterStops } from "../services/clusterer.js";
 import { buildDurationMatrix, fetchLegMetrics } from "../services/matrixBuilder.js";
 import { optimizeRoute } from "../services/routeOptimizer.js";
 import { generateAlerts } from "../services/alertGenerator.js";
 import {
+  GeocodedStop,
   OptimizeRouteRequest,
   OptimizeRouteResponse,
   RouteStep,
 } from "../types/index.js";
+import {
+  isValidStartCoords,
+  validateVerifiedStopCoords,
+} from "../services/quickRouteVerify.js";
 
 const METERS_PER_MILE = 1609.344;
 const DEFAULT_CLUSTER_METERS = 50;
@@ -16,27 +21,80 @@ const DEFAULT_ALERT_METERS = 120;
 
 export const optimizeRouteRouter = Router();
 
+export interface GeocodeStartFn {
+  (address: string): Promise<GeocodedStop>;
+}
+
+export type PreparePointsResult =
+  | { ok: true; start: GeocodedStop; stops: GeocodedStop[] }
+  | { ok: false; status: number; error: string };
+
+/**
+ * Resolve start + stops for Quick Route.
+ * Verified stops must already carry coordinates; they are never re-geocoded.
+ */
+export async function prepareOptimizePoints(
+  body: OptimizeRouteRequest,
+  geocodeStart: GeocodeStartFn = geocodeStartAddress
+): Promise<PreparePointsResult> {
+  if (!body.startAddress || typeof body.startAddress !== "string") {
+    return { ok: false, status: 400, error: "startAddress is required." };
+  }
+  if (!Array.isArray(body.stops) || body.stops.length === 0) {
+    return { ok: false, status: 400, error: "stops must be a non-empty array." };
+  }
+
+  const geocodedStops: GeocodedStop[] = [];
+  for (const [index, stop] of body.stops.entries()) {
+    if (!stop.address || typeof stop.address !== "string") {
+      return { ok: false, status: 400, error: "Each stop must have an address string." };
+    }
+    if (stop.verificationStatus !== "verified") {
+      return {
+        ok: false,
+        status: 422,
+        error: `Stop ${index + 1} ("${stop.address}") is not verified. Resolve every stop before generating a route.`,
+      };
+    }
+    const validated = validateVerifiedStopCoords(stop);
+    if (!validated.ok) {
+      return { ok: false, status: 422, error: validated.error };
+    }
+    geocodedStops.push({
+      address: validated.stop.address,
+      packageCount: stop.packageCount ?? 1,
+      lat: validated.stop.lat,
+      lng: validated.stop.lng,
+    });
+  }
+
+  let start: GeocodedStop;
+  if (isValidStartCoords(body.startCoords)) {
+    start = {
+      address: body.startAddress,
+      packageCount: 0,
+      lat: body.startCoords!.lat,
+      lng: body.startCoords!.lng,
+    };
+  } else {
+    start = await geocodeStart(body.startAddress);
+  }
+
+  return { ok: true, start, stops: geocodedStops };
+}
+
 optimizeRouteRouter.post(
   "/",
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const body = req.body as OptimizeRouteRequest;
 
-      // --- Validate request ---
-      if (!body.startAddress || typeof body.startAddress !== "string") {
-        res.status(400).json({ error: "startAddress is required." });
+      const prepared = await prepareOptimizePoints(body);
+      if (!prepared.ok) {
+        res.status(prepared.status).json({ error: prepared.error });
         return;
       }
-      if (!Array.isArray(body.stops) || body.stops.length === 0) {
-        res.status(400).json({ error: "stops must be a non-empty array." });
-        return;
-      }
-      for (const stop of body.stops) {
-        if (!stop.address || typeof stop.address !== "string") {
-          res.status(400).json({ error: "Each stop must have an address string." });
-          return;
-        }
-      }
+      const { start, stops: geocodedStops } = prepared;
 
       const clusterMeters = body.clusterMeters ?? DEFAULT_CLUSTER_METERS;
       const alertMeters = body.alertMeters ?? DEFAULT_ALERT_METERS;
@@ -44,18 +102,6 @@ optimizeRouteRouter.post(
       const osrmBaseUrl =
         process.env.OSRM_BASE_URL ?? "http://router.project-osrm.org";
 
-      // --- 1. Geocode all addresses (Google if configured, else OpenStreetMap) ---
-      //        If pre-resolved start coordinates are supplied, use them for the depot
-      //        (avoids a round-trip geocode for the start point).
-      const { start: geocodedStart, stops: geocodedStops } = await geocodeAll(
-        body.startAddress,
-        body.stops
-      );
-      const start = body.startCoords
-        ? { ...geocodedStart, lat: body.startCoords.lat, lng: body.startCoords.lng }
-        : geocodedStart;
-
-      // --- 2. Cluster stops by proximity ---
       const clusters = clusterStops(geocodedStops, clusterMeters);
 
       if (clusters.length === 0) {
@@ -63,15 +109,11 @@ optimizeRouteRouter.post(
         return;
       }
 
-      // --- 3. Build OSRM duration matrix (depot + all cluster centroids) ---
       const durationMatrix = await buildDurationMatrix(start, clusters, osrmBaseUrl);
 
-      // --- 4. Optimise visit order ---
       const orderedClusterIndices = optimizeRoute(durationMatrix);
       const orderedClusters = orderedClusterIndices.map((i) => clusters[i]);
 
-      // --- 5. Fetch per-leg metrics for the final ordered route ---
-      //        We do this sequentially to be polite to the public OSRM instance.
       const legMetrics = await Promise.all(
         orderedClusters.map(async (cluster, stepIdx) => {
           const from =
@@ -82,10 +124,8 @@ optimizeRouteRouter.post(
         })
       );
 
-      // --- 6. Generate nearby-package alerts per cluster ---
       const alertsPerCluster = generateAlerts(orderedClusters, alertMeters);
 
-      // --- 7. Build response ---
       const route: RouteStep[] = orderedClusters.map((cluster, i) => ({
         sequence: i + 1,
         clusterId: cluster.clusterId,

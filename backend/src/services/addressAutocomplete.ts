@@ -7,8 +7,19 @@ import {
   expandSearchQueries,
   mergeAndRank,
   parsePartialAddress,
-  shouldRetryNationwide,
+  shouldUseNationwideFallback,
 } from "./addressAutocompleteRank.js";
+import {
+  extractCityStateZip,
+  extractHouseNumberFromStreetLine,
+  isQuickRouteServiceAreaResult,
+  streetPortion,
+} from "./addressMatch.js";
+import {
+  QUICK_ROUTE_NOMINATIM_VIEWBOX,
+  QUICK_ROUTE_PHOTON_BBOX,
+  QUICK_ROUTE_SERVICE_AREA,
+} from "../config/quickRouteServiceArea.js";
 import { nominatimGate } from "./providerRateLimit.js";
 
 export type {
@@ -24,6 +35,7 @@ export {
   deriveConfidence,
   locationBucket,
   autocompleteCacheKey,
+  shouldUseNationwideFallback,
 } from "./addressAutocompleteRank.js";
 
 const PHOTON_URL = "https://photon.komoot.io/api/";
@@ -34,10 +46,9 @@ const GOOGLE_GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json";
 const NOMINATIM_USER_AGENT =
   process.env.NOMINATIM_USER_AGENT ?? "parcel-sweep/1.0 (delivery route optimizer)";
 
-const DEFAULT_CITY = "South Bend";
-const DEFAULT_STATE = "IN";
-const DEFAULT_CENTER = { lat: 41.6764, lng: -86.252 };
-const SERVICE_BBOX = "-86.50,41.48,-86.05,41.82";
+const DEFAULT_CITY = QUICK_ROUTE_SERVICE_AREA.city;
+const DEFAULT_STATE = QUICK_ROUTE_SERVICE_AREA.state;
+const DEFAULT_CENTER = QUICK_ROUTE_SERVICE_AREA.center;
 const CACHE_TTL_MS = 2 * 60 * 1000;
 const CACHE_MAX = 300;
 const GEOMETRY_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -83,6 +94,8 @@ interface NominatimResult {
     road?: string;
     city?: string;
     town?: string;
+    village?: string;
+    municipality?: string;
     state?: string;
     postcode?: string;
   };
@@ -104,19 +117,18 @@ const geometryCache = new LruCache<{ lat: number; lng: number }>(
   GEOMETRY_CACHE_TTL_MS
 );
 
+export function getCachedPlaceGeometry(placeId: string): { lat: number; lng: number } | null {
+  return geometryCache.get(placeId);
+}
+
 function normalizeState(state: string | undefined): string {
   if (!state) return "";
   if (state === "Indiana" || state === "IN") return "IN";
   return state;
 }
 
-function isInServiceArea(props: PhotonFeature["properties"]): boolean {
-  const st = normalizeState(props.state);
-  const zip = props.postcode ?? "";
-  const city = (props.city ?? "").toLowerCase();
-  if (st === "IN" && city.includes("south bend")) return true;
-  if (/^466\d{2}$/.test(zip)) return true;
-  return false;
+function nominatimCity(r: NominatimResult): string | undefined {
+  return r.address?.city ?? r.address?.town ?? r.address?.village ?? r.address?.municipality;
 }
 
 function buildPhotonDisplayName(props: PhotonFeature["properties"]): string {
@@ -137,8 +149,21 @@ function buildNominatimDisplayName(r: NominatimResult): string {
   if (!a) return r.display_name.split(",").slice(0, 4).join(",").trim();
   const street = [a.house_number, a.road].filter(Boolean).join(" ");
   const state = a.state === "Indiana" ? "IN" : (a.state ?? "");
-  const locality = [a.city ?? a.town, state, a.postcode].filter(Boolean).join(", ");
+  const locality = [nominatimCity(r), state, a.postcode].filter(Boolean).join(", ");
   return street ? `${street}, ${locality}` : r.display_name.split(",").slice(0, 3).join(",");
+}
+
+function attachParsedLocality<T extends RankCandidate>(candidate: T): T {
+  const parsed = extractCityStateZip(candidate.displayName);
+  return {
+    ...candidate,
+    city: candidate.city ?? parsed.city,
+    state: candidate.state ?? parsed.state,
+    zip: candidate.zip ?? parsed.zip,
+    houseNumber:
+      candidate.houseNumber ?? extractHouseNumberFromStreetLine(streetPortion(candidate.displayName)),
+    street: candidate.street ?? streetPortion(candidate.displayName).replace(/^\d+[a-zA-Z]?\s+/, "").trim(),
+  };
 }
 
 async function resolveGooglePlaceGeometry(
@@ -175,6 +200,7 @@ async function googleAutocomplete(
   const predictions: Array<{ place_id: string; description: string }> = [];
   const seen = new Set<string>();
 
+  // Literal query is queries[0] after expandSearchQueries ordering.
   for (const input of queries.slice(0, 1)) {
     try {
       const response = await axios.get<GoogleAutocompleteResponse>(
@@ -184,7 +210,7 @@ async function googleAutocomplete(
             input,
             key: apiKey,
             location: `${near.lat},${near.lng}`,
-            radius: serviceAreaOnly ? 50000 : 500000,
+            radius: serviceAreaOnly ? 12000 : 500000,
             components: serviceAreaOnly
               ? `country:us|administrative_area:${stateAbbr}`
               : "country:us",
@@ -213,16 +239,23 @@ async function googleAutocomplete(
 
   return slice.map((p, i) => {
     const geometry = geometries[i];
-    return {
+    const locality = extractCityStateZip(p.description);
+    const streetLine = streetPortion(p.description);
+    return attachParsedLocality({
       placeId: p.place_id,
       displayName: p.description,
-      lat: geometry?.lat ?? near.lat,
-      lng: geometry?.lng ?? near.lng,
+      lat: geometry?.lat,
+      lng: geometry?.lng,
       confidence: "ambiguous" as const,
       rankReason: "Suggested match",
       provider: "google" as const,
       hasGeometry: Boolean(geometry),
-    };
+      city: locality.city,
+      state: locality.state,
+      zip: locality.zip,
+      houseNumber: extractHouseNumberFromStreetLine(streetLine),
+      street: streetLine.replace(/^\d+[a-zA-Z]?\s+/, "").trim(),
+    });
   });
 }
 
@@ -241,7 +274,7 @@ async function photonSearch(
     params.lon = near.lng;
   }
   if (serviceAreaOnly) {
-    params.bbox = SERVICE_BBOX;
+    params.bbox = QUICK_ROUTE_PHOTON_BBOX;
   }
 
   const response = await axios.get<PhotonResponse>(PHOTON_URL, {
@@ -250,22 +283,36 @@ async function photonSearch(
   });
 
   return response.data.features
-    .filter((f) =>
-      serviceAreaOnly
-        ? isInServiceArea(f.properties)
-        : (f.properties.countrycode ?? "us").toLowerCase() === "us"
-    )
-    .map((f) => ({
-      placeId: `${f.properties.osm_type}-${f.properties.osm_id}`,
-      displayName: buildPhotonDisplayName(f.properties),
-      lat: f.geometry.coordinates[1],
-      lng: f.geometry.coordinates[0],
-      confidence: "interpolated" as const,
-      rankReason: "Suggested match",
-      provider: "photon" as const,
-      hasGeometry: true,
-      houseNumberVerified: Boolean(f.properties.housenumber),
-    }));
+    .filter((f) => {
+      if (!serviceAreaOnly) {
+        return (f.properties.countrycode ?? "us").toLowerCase() === "us";
+      }
+      return isQuickRouteServiceAreaResult({
+        city: f.properties.city,
+        state: f.properties.state,
+        zip: f.properties.postcode,
+        lat: f.geometry.coordinates[1],
+        lng: f.geometry.coordinates[0],
+      });
+    })
+    .map((f) =>
+      attachParsedLocality({
+        placeId: `${f.properties.osm_type}-${f.properties.osm_id}`,
+        displayName: buildPhotonDisplayName(f.properties),
+        lat: f.geometry.coordinates[1],
+        lng: f.geometry.coordinates[0],
+        confidence: "interpolated" as const,
+        rankReason: "Suggested match",
+        provider: "photon" as const,
+        hasGeometry: true,
+        houseNumberVerified: Boolean(f.properties.housenumber),
+        city: f.properties.city,
+        state: normalizeState(f.properties.state),
+        zip: f.properties.postcode,
+        houseNumber: f.properties.housenumber,
+        street: f.properties.street || f.properties.name,
+      })
+    );
 }
 
 async function nominatimSearch(
@@ -274,7 +321,6 @@ async function nominatimSearch(
   fetchLimit: number,
   serviceAreaOnly: boolean
 ): Promise<RankCandidate[]> {
-  const delta = serviceAreaOnly ? 0.22 : 2.5;
   const params: Record<string, string | number> = {
     q: query,
     format: "json",
@@ -282,7 +328,11 @@ async function nominatimSearch(
     countrycodes: "us",
     limit: fetchLimit,
   };
-  if (near) {
+  if (serviceAreaOnly) {
+    params.viewbox = QUICK_ROUTE_NOMINATIM_VIEWBOX;
+    params.bounded = 1;
+  } else if (near) {
+    const delta = 2.5;
     params.lat = near.lat;
     params.lon = near.lng;
     params.viewbox = `${near.lng - delta},${near.lat + delta},${near.lng + delta},${near.lat - delta}`;
@@ -299,22 +349,33 @@ async function nominatimSearch(
     .filter((r) => r.address?.road || r.address?.house_number)
     .filter((r) => {
       if (!serviceAreaOnly) return true;
-      const city = (r.address?.city ?? r.address?.town ?? "").toLowerCase();
-      const state = r.address?.state ?? "";
-      const zip = r.address?.postcode ?? "";
-      return city.includes("south bend") || state === "Indiana" || /^466\d{2}$/.test(zip);
+      return isQuickRouteServiceAreaResult({
+        city: nominatimCity(r),
+        state: r.address?.state,
+        zip: r.address?.postcode,
+        lat: parseFloat(r.lat),
+        lng: parseFloat(r.lon),
+        displayName: r.display_name,
+      });
     })
-    .map((r) => ({
-      placeId: String(r.place_id),
-      displayName: buildNominatimDisplayName(r),
-      lat: parseFloat(r.lat),
-      lng: parseFloat(r.lon),
-      confidence: "interpolated" as const,
-      rankReason: "Suggested match",
-      provider: "nominatim" as const,
-      hasGeometry: true,
-      houseNumberVerified: Boolean(r.address?.house_number),
-    }));
+    .map((r) =>
+      attachParsedLocality({
+        placeId: String(r.place_id),
+        displayName: buildNominatimDisplayName(r),
+        lat: parseFloat(r.lat),
+        lng: parseFloat(r.lon),
+        confidence: "interpolated" as const,
+        rankReason: "Suggested match",
+        provider: "nominatim" as const,
+        hasGeometry: true,
+        houseNumberVerified: Boolean(r.address?.house_number),
+        city: nominatimCity(r),
+        state: r.address?.state,
+        zip: r.address?.postcode,
+        houseNumber: r.address?.house_number,
+        street: r.address?.road,
+      })
+    );
 }
 
 async function osmAutocomplete(
@@ -329,7 +390,6 @@ async function osmAutocomplete(
 
   const photonQueries = serviceAreaOnly ? queries.slice(0, 3) : queries.slice(0, 1);
 
-  // Parallel Photon lookups — interactive autocomplete must stay sub-second when possible.
   const photonBatches = await Promise.all(
     photonQueries.map((query) =>
       photonSearch(query, near, perQuery, serviceAreaOnly).catch(() => [])
@@ -337,7 +397,6 @@ async function osmAutocomplete(
   );
   const results = photonBatches.flat();
 
-  // Single Nominatim fallback only when Photon is sparse (avoids serial multi-second chains).
   if (results.length < Math.max(2, limit / 2)) {
     const nominatimPrimary = await nominatimGate
       .run(`nominatim:${primaryQuery}`, () =>
@@ -355,8 +414,12 @@ async function runAutocompleteSearch(
 ): Promise<AutocompleteSuggestion[]> {
   const q = opts.q.trim();
   const limit = Math.min(opts.limit ?? 8, 10);
-  const city = opts.city ?? DEFAULT_CITY;
-  const state = opts.state ?? DEFAULT_STATE;
+  const city = opts.serviceAreaOnly
+    ? QUICK_ROUTE_SERVICE_AREA.city
+    : (opts.city ?? DEFAULT_CITY);
+  const state = opts.serviceAreaOnly
+    ? QUICK_ROUTE_SERVICE_AREA.state
+    : (opts.state ?? DEFAULT_STATE);
   const near = opts.near ?? (opts.serviceAreaOnly ? DEFAULT_CENTER : undefined);
   const parsed = parsePartialAddress(q);
   const queries = expandSearchQueries(q, city, state, opts.serviceAreaOnly);
@@ -367,7 +430,9 @@ async function runAutocompleteSearch(
     osmAutocomplete(queries, near, limit + 4, opts.serviceAreaOnly),
   ]);
 
-  return mergeAndRank([...googleResults, ...osmResults], parsed, rankNear, limit);
+  return mergeAndRank([...googleResults, ...osmResults], parsed, rankNear, limit, {
+    enforceServiceArea: opts.serviceAreaOnly,
+  });
 }
 
 export async function searchAddressAutocomplete(
@@ -387,7 +452,7 @@ export async function searchAddressAutocomplete(
 
   let merged = await runAutocompleteSearch({ ...opts, q, limit, city, state, serviceAreaOnly });
 
-  if (merged.length === 0 && serviceAreaOnly && shouldRetryNationwide(q, city)) {
+  if (merged.length === 0 && shouldUseNationwideFallback(serviceAreaOnly, q, city)) {
     merged = await runAutocompleteSearch({
       ...opts,
       q,

@@ -1,3 +1,42 @@
+import {
+  type CardinalDirection,
+  type ParsedPartialAddress,
+  STREET_SUFFIX_RE,
+  candidateHasHouseNumber,
+  extractCityStateZip,
+  extractHouseNumberFromStreetLine,
+  hasFullCardinal,
+  hasUsableGeometry,
+  isQuickRouteServiceAreaResult,
+  isQuickRouteZip,
+  isSouthBendLocality,
+  normalizeDirectional,
+  parsePartialAddress,
+  queryHasLocality,
+  requestedStreetMatchesCandidate,
+  streetCoreWords,
+  streetPortion,
+  streetsEquivalent,
+} from "./addressMatch.js";
+
+export type {
+  CardinalDirection,
+  ParsedPartialAddress,
+} from "./addressMatch.js";
+
+export {
+  parsePartialAddress,
+  queryHasLocality,
+  hasFullCardinal,
+  normalizeDirectional,
+  streetPortion,
+  candidateHasHouseNumber,
+  normalizeStreetCore,
+  streetCoreWords,
+  streetsEquivalent,
+  requestedStreetMatchesCandidate,
+} from "./addressMatch.js";
+
 export type AddressConfidence =
   | "verified_rooftop"
   | "verified_parcel"
@@ -6,25 +45,19 @@ export type AddressConfidence =
   | "street_only"
   | "ambiguous";
 
-export type CardinalDirection = "E" | "W" | "N" | "S";
-
 export interface AutocompleteSuggestion {
   placeId: string;
   displayName: string;
-  lat: number;
-  lng: number;
+  lat?: number;
+  lng?: number;
   confidence: AddressConfidence;
   rankReason: string;
   distanceMeters?: number;
-}
-
-export interface ParsedPartialAddress {
+  city?: string;
+  state?: string;
+  zip?: string;
   houseNumber?: string;
-  preDirectional?: CardinalDirection;
-  postDirectional?: CardinalDirection;
-  /** Street tokens after house number / directionals, before suffix. */
-  streetPart: string;
-  suffix?: string;
+  street?: string;
 }
 
 export interface RankCandidate extends AutocompleteSuggestion {
@@ -32,22 +65,6 @@ export interface RankCandidate extends AutocompleteSuggestion {
   hasGeometry: boolean;
   houseNumberVerified?: boolean;
 }
-
-const STREET_SUFFIX =
-  /\b(st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|ln|lane|ct|court|way|pl|place|ter|terrace|cir|circle|pkwy|parkway)\b/i;
-
-const FULL_CARDINAL = /\b(east|west|north|south)\b/i;
-
-const DIRECTIONAL_WORD: Record<string, CardinalDirection> = {
-  east: "E",
-  west: "W",
-  north: "N",
-  south: "S",
-  e: "E",
-  w: "W",
-  n: "N",
-  s: "S",
-};
 
 const CONFIDENCE_SCORE: Record<AddressConfidence, number> = {
   verified_rooftop: 80,
@@ -58,54 +75,13 @@ const CONFIDENCE_SCORE: Record<AddressConfidence, number> = {
   ambiguous: -80,
 };
 
-export function normalizeDirectional(token: string): CardinalDirection | undefined {
-  return DIRECTIONAL_WORD[token.toLowerCase()];
-}
+const STRONG_CONFIDENCE: ReadonlySet<AddressConfidence> = new Set([
+  "verified_rooftop",
+  "verified_parcel",
+]);
 
-export function parsePartialAddress(q: string): ParsedPartialAddress {
-  const trimmed = q.trim();
-  const houseMatch = trimmed.match(/^(\d+[a-zA-Z]?)\s+(.+)$/);
-  let rest = houseMatch ? houseMatch[2].trim() : trimmed;
-  const houseNumber = houseMatch?.[1];
-
-  let preDirectional: CardinalDirection | undefined;
-  let postDirectional: CardinalDirection | undefined;
-
-  const preMatch = rest.match(/^(East|West|North|South|E|W|N|S)\.?\s+/i);
-  if (preMatch) {
-    preDirectional = normalizeDirectional(preMatch[1]);
-    rest = rest.slice(preMatch[0].length).trim();
-  }
-
-  let suffix: string | undefined;
-  const suffixMatch = rest.match(
-    /\s+(St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Ln|Lane|Ct|Court|Way|Pl|Place|Ter|Terrace|Cir|Circle|Pkwy|Parkway)\.?$/i
-  );
-  if (suffixMatch) {
-    suffix = suffixMatch[1].toLowerCase();
-    rest = rest.slice(0, -suffixMatch[0].length).trim();
-  }
-
-  const postMatch = rest.match(/\s+(East|West|North|South|E|W|N|S)\.?$/i);
-  if (postMatch) {
-    postDirectional = normalizeDirectional(postMatch[1]);
-    rest = rest.slice(0, -postMatch[0].length).trim();
-  }
-
-  return { houseNumber, preDirectional, postDirectional, streetPart: rest, suffix };
-}
-
-export function queryHasLocality(q: string, city: string, state: string): boolean {
-  const lower = q.toLowerCase();
-  return (
-    lower.includes(city.toLowerCase()) ||
-    lower.includes(state.toLowerCase()) ||
-    lower.includes("indiana")
-  );
-}
-
-export function hasFullCardinal(streetPart: string): boolean {
-  return FULL_CARDINAL.test(streetPart);
+export function isStrongConfidence(confidence: AddressConfidence): boolean {
+  return STRONG_CONFIDENCE.has(confidence);
 }
 
 export function expandSearchQueries(
@@ -131,37 +107,38 @@ export function expandSearchQueries(
     ordered.push(t);
   };
 
+  // Literal user input is always query #1. Guessed expansions never outrank it.
+  add(queryHasLocality(q, city, state) ? trimmed : `${trimmed} ${locality}`);
+
   if (parsed.houseNumber && parsed.streetPart) {
     const { houseNumber, streetPart, preDirectional } = parsed;
-    const hasSuffix = Boolean(parsed.suffix) || STREET_SUFFIX.test(streetPart);
+    const dir = preDirectional ?? "";
+    const hasSuffix = Boolean(parsed.suffix) || STREET_SUFFIX_RE.test(streetPart);
     const hasCardinal = Boolean(preDirectional) || hasFullCardinal(streetPart);
 
-    if (!hasSuffix && !hasCardinal) {
+    if (!hasSuffix) {
+      add(`${houseNumber} ${dir} ${streetPart} Street ${locality}`);
+      add(`${houseNumber} ${dir} ${streetPart} Avenue ${locality}`);
+    }
+    // Guessed directionals only when the user did not type one.
+    if (!hasCardinal) {
       add(`${houseNumber} East ${streetPart} ${locality}`);
       add(`${houseNumber} West ${streetPart} ${locality}`);
-      add(`${houseNumber} ${streetPart} Avenue ${locality}`);
-      add(`${houseNumber} ${streetPart} Street ${locality}`);
-    } else if (!hasSuffix) {
-      add(`${houseNumber} ${streetPart} Avenue ${locality}`);
-      add(`${houseNumber} ${streetPart} Street ${locality}`);
     }
   } else if (
     parsed.streetPart &&
+    !parsed.houseNumber &&
     !parsed.suffix &&
-    !STREET_SUFFIX.test(parsed.streetPart) &&
+    !STREET_SUFFIX_RE.test(parsed.streetPart) &&
     !hasFullCardinal(parsed.streetPart)
   ) {
-    add(`East ${parsed.streetPart} Avenue ${locality}`);
-    add(`West ${parsed.streetPart} Avenue ${locality}`);
+    add(`${parsed.streetPart} Street ${locality}`);
     add(`${parsed.streetPart} Avenue ${locality}`);
+    add(`East ${parsed.streetPart} ${locality}`);
+    add(`West ${parsed.streetPart} ${locality}`);
   }
 
-  add(queryHasLocality(q, city, state) ? q : `${q} ${locality}`);
   return ordered.slice(0, 6);
-}
-
-export function streetPortion(displayName: string): string {
-  return (displayName.split(",")[0] ?? displayName).trim();
 }
 
 export function extractCandidateDirectional(streetLine: string): CardinalDirection | undefined {
@@ -173,47 +150,10 @@ export function extractCandidateDirectional(streetLine: string): CardinalDirecti
   return undefined;
 }
 
-/** Street core for fuzzy match — keeps directionals out of token comparison. */
-export function normalizeStreetCore(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/^\d+[a-z]?\s*/, " ")
-    .replace(/^(east|west|north|south|e|w|n|s)\.?\s+/i, " ")
-    .replace(/\s+(east|west|north|south|e|w|n|s)\.?$/i, " ")
-    .replace(
-      /\b(street|st|avenue|ave|road|rd|drive|dr|lane|ln|boulevard|blvd|court|ct|way|place|pl|terrace|ter|circle|cir|parkway|pkwy)\b/g,
-      " "
-    )
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-export function streetCoreWords(text: string): string[] {
-  return normalizeStreetCore(text)
-    .split(/\s+/)
-    .filter((t) => t.length >= 1 && !/^\d+$/.test(t));
-}
-
 export function streetQueryTokens(streetPart: string): string[] {
   const cleaned = streetPart.trim().toLowerCase();
   if (!cleaned) return [];
-  if (STREET_SUFFIX.test(cleaned) || hasFullCardinal(cleaned)) {
-    return streetCoreWords(cleaned);
-  }
-  return [cleaned.replace(/[^a-z0-9]/g, "")].filter((t) => t.length >= 1);
-}
-
-export function fuzzyStreetMatch(queryToken: string, word: string): boolean {
-  if (!queryToken || !word) return false;
-  if (word.startsWith(queryToken)) return true;
-  if (queryToken.length === 1) return word.startsWith(queryToken);
-
-  let qi = 0;
-  for (let wi = 0; wi < word.length && qi < queryToken.length; wi++) {
-    if (word[wi] === queryToken[qi]) qi++;
-  }
-  return qi === queryToken.length;
+  return streetCoreWords(cleaned);
 }
 
 export function haversineMeters(
@@ -251,35 +191,87 @@ function proximityScore(meters: number): number {
   return 0;
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function candidateStreetLine(candidate: RankCandidate): string {
+  return candidate.street
+    ? [candidate.houseNumber, candidate.street].filter(Boolean).join(" ")
+    : streetPortion(candidate.displayName);
 }
 
-export function candidateHasHouseNumber(streetLine: string, houseNumber: string): boolean {
-  const re = new RegExp(`\\b${escapeRegExp(houseNumber)}\\b`, "i");
-  return re.test(streetLine);
+function candidateHouseNumber(candidate: RankCandidate): string | undefined {
+  return (
+    candidate.houseNumber ??
+    extractHouseNumberFromStreetLine(streetPortion(candidate.displayName))
+  );
 }
 
+function localityMatchesServiceArea(candidate: RankCandidate, enforceServiceArea: boolean): boolean {
+  if (!enforceServiceArea) return true;
+  return isQuickRouteServiceAreaResult({
+    city: candidate.city,
+    state: candidate.state,
+    zip: candidate.zip,
+    lat: candidate.lat,
+    lng: candidate.lng,
+    displayName: candidate.displayName,
+  });
+}
+
+export function streetMatchesRequest(parsed: ParsedPartialAddress, candidate: RankCandidate): boolean {
+  const streetLine = candidateStreetLine(candidate);
+  if (!parsed.streetPart) return false;
+  if (requestedStreetMatchesCandidate(parsed.streetPart, streetLine)) return true;
+  const reconstructed = [parsed.preDirectional, parsed.streetPart, parsed.suffix]
+    .filter(Boolean)
+    .join(" ");
+  return streetsEquivalent(reconstructed, streetLine);
+}
+
+export function houseMatchesRequest(parsed: ParsedPartialAddress, candidate: RankCandidate): boolean {
+  if (!parsed.houseNumber) return false;
+  const candidateHouse = candidateHouseNumber(candidate);
+  if (candidateHouse && parsed.houseNumber.toLowerCase() === candidateHouse.toLowerCase()) {
+    return true;
+  }
+  return candidateHasHouseNumber(candidateStreetLine(candidate), parsed.houseNumber);
+}
+
+/**
+ * Strong/exact confidence requires house + street + (when enforced) service area + geometry.
+ * Provider parcel metadata cannot substitute for an address-component match.
+ */
 export function deriveConfidence(
   candidate: RankCandidate,
-  parsed: ParsedPartialAddress
+  parsed: ParsedPartialAddress,
+  enforceServiceArea = false
 ): AddressConfidence {
-  const streetLine = streetPortion(candidate.displayName);
+  const streetLine = candidateStreetLine(candidate);
   const hasHouseInLine = /\d/.test(streetLine);
+  const geometryOk = candidate.hasGeometry && hasUsableGeometry(candidate.lat, candidate.lng);
+  const streetOk = parsed.streetPart ? streetMatchesRequest(parsed, candidate) : false;
+  const houseOk = parsed.houseNumber ? houseMatchesRequest(parsed, candidate) : false;
+  const areaOk = localityMatchesServiceArea(candidate, enforceServiceArea);
 
-  if (candidate.provider === "google" && !candidate.hasGeometry) return "ambiguous";
+  if (!geometryOk) return "ambiguous";
 
-  if (parsed.houseNumber) {
-    const exact = candidateHasHouseNumber(streetLine, parsed.houseNumber);
-    if (candidate.houseNumberVerified === true && exact) return "verified_parcel";
-    if (candidate.houseNumberVerified === false && exact) {
-      return "street_matched_number_unverified";
-    }
-    if (exact) return "interpolated";
-    if (!hasHouseInLine) return "street_only";
-    return "street_matched_number_unverified";
+  if (parsed.houseNumber && parsed.streetPart && houseOk && !streetOk) {
+    // Same number, different street — never Exact / verified_parcel.
+    return "ambiguous";
   }
 
+  if (parsed.houseNumber && houseOk && streetOk && areaOk && geometryOk) {
+    if (candidate.provider === "google") return "verified_rooftop";
+    if (candidate.houseNumberVerified === true) return "verified_parcel";
+    return "interpolated";
+  }
+
+  if (parsed.houseNumber) {
+    if (streetOk && !houseOk && !hasHouseInLine) return "street_only";
+    if (streetOk && houseOk && !areaOk) return "interpolated";
+    if (streetOk) return "street_matched_number_unverified";
+    return "ambiguous";
+  }
+
+  if (streetOk && areaOk) return "street_only";
   if (!hasHouseInLine) return "street_only";
   return "interpolated";
 }
@@ -288,9 +280,13 @@ export function buildRankReason(
   confidence: AddressConfidence,
   distanceMeters: number | undefined,
   parsed: ParsedPartialAddress,
-  candidateDir: CardinalDirection | undefined
+  candidateDir: CardinalDirection | undefined,
+  streetOk: boolean
 ): string {
   const inputDir = inputDirectional(parsed);
+  if (parsed.houseNumber && parsed.streetPart && !streetOk) {
+    return "Street does not match";
+  }
   if (inputDir && candidateDir && inputDir !== candidateDir) {
     return "Different direction — check carefully";
   }
@@ -311,16 +307,18 @@ export function buildRankReason(
 export function scoreCandidate(
   candidate: RankCandidate,
   parsed: ParsedPartialAddress,
-  near: { lat: number; lng: number }
+  near: { lat: number; lng: number },
+  enforceServiceArea = false
 ): number {
-  const streetLine = streetPortion(candidate.displayName);
-  const words = streetCoreWords(streetLine);
+  const streetLine = candidateStreetLine(candidate);
   const candidateDir = extractCandidateDirectional(streetLine);
-  const lower = candidate.displayName.toLowerCase();
   let score = 0;
 
+  const streetOk = parsed.streetPart ? streetMatchesRequest(parsed, candidate) : false;
+  const houseOk = parsed.houseNumber ? houseMatchesRequest(parsed, candidate) : false;
+
   if (parsed.houseNumber) {
-    if (candidateHasHouseNumber(streetLine, parsed.houseNumber)) {
+    if (houseOk) {
       score += candidate.houseNumberVerified === true ? 220 : 120;
       if (candidate.houseNumberVerified === false) score -= 300;
     } else {
@@ -328,41 +326,36 @@ export function scoreCandidate(
     }
   }
 
-  const tokens = streetQueryTokens(parsed.streetPart);
-  if (tokens.length === 0) {
+  if (!parsed.streetPart) {
     score += 5;
+  } else if (streetOk) {
+    score += 80;
   } else {
-    let streetMatchCount = 0;
-    for (const token of tokens) {
-      if (words.some((w) => fuzzyStreetMatch(token, w))) {
-        streetMatchCount++;
-        score += 80;
-      } else {
-        score -= 40;
-      }
-    }
-    if (streetMatchCount === 0 && parsed.houseNumber) {
-      if (candidateHasHouseNumber(streetLine, parsed.houseNumber)) score -= 90;
-    }
+    // A matching house number must never rescue a mismatching street.
+    score -= 240;
+    if (houseOk) score -= 200;
   }
 
   score += scoreDirectional(parsed, candidateDir);
 
   if (parsed.suffix) {
-    const suffixRe = new RegExp(`\\b${escapeRegExp(parsed.suffix.slice(0, 3))}`, "i");
+    const suffixRe = new RegExp(`\\b${parsed.suffix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").slice(0, 3)}`, "i");
     if (suffixRe.test(streetLine)) score += 20;
   }
 
   if (parsed.houseNumber && !/\d/.test(streetLine)) score -= 30;
 
-  if (lower.includes("south bend")) score += 20;
-  if (/^466\d{2}/.test(candidate.displayName)) score += 10;
+  const fromDisplay = extractCityStateZip(candidate.displayName);
+  const city = candidate.city ?? fromDisplay.city;
+  const zip = candidate.zip ?? fromDisplay.zip;
+  if (isSouthBendLocality(city)) score += 20;
+  if (isQuickRouteZip(zip)) score += 15;
 
-  const confidence = deriveConfidence(candidate, parsed);
+  const confidence = deriveConfidence(candidate, parsed, enforceServiceArea);
   score += CONFIDENCE_SCORE[confidence];
 
-  if (candidate.hasGeometry) {
-    const dMeters = haversineMeters(near, { lat: candidate.lat, lng: candidate.lng });
+  if (candidate.hasGeometry && hasUsableGeometry(candidate.lat, candidate.lng)) {
+    const dMeters = haversineMeters(near, { lat: candidate.lat!, lng: candidate.lng! });
     score += proximityScore(dMeters);
     score -= dMeters / 8000;
   } else {
@@ -372,28 +365,48 @@ export function scoreCandidate(
   return score;
 }
 
+export interface MergeAndRankOptions {
+  enforceServiceArea?: boolean;
+}
+
 export function mergeAndRank(
   candidates: RankCandidate[],
   parsed: ParsedPartialAddress,
   near: { lat: number; lng: number },
-  limit: number
+  limit: number,
+  options: MergeAndRankOptions = {}
 ): AutocompleteSuggestion[] {
+  const enforceServiceArea = options.enforceServiceArea === true;
   const seen = new Set<string>();
   const ranked = candidates
+    .filter((c) => {
+      if (!enforceServiceArea) return true;
+      return isQuickRouteServiceAreaResult({
+        city: c.city,
+        state: c.state,
+        zip: c.zip,
+        lat: c.lat,
+        lng: c.lng,
+        displayName: c.displayName,
+      });
+    })
     .map((c) => {
-      const confidence = deriveConfidence(c, parsed);
-      const streetLine = streetPortion(c.displayName);
+      const confidence = deriveConfidence(c, parsed, enforceServiceArea);
+      const streetLine = candidateStreetLine(c);
       const candidateDir = extractCandidateDirectional(streetLine);
-      const distanceMeters = c.hasGeometry
-        ? haversineMeters(near, { lat: c.lat, lng: c.lng })
-        : undefined;
-      const rankReason = buildRankReason(confidence, distanceMeters, parsed, candidateDir);
+      const streetOk = parsed.streetPart ? streetMatchesRequest(parsed, c) : false;
+      const distanceMeters =
+        c.hasGeometry && hasUsableGeometry(c.lat, c.lng)
+          ? haversineMeters(near, { lat: c.lat!, lng: c.lng! })
+          : undefined;
+      const rankReason = buildRankReason(confidence, distanceMeters, parsed, candidateDir, streetOk);
       return {
         ...c,
         confidence,
         rankReason,
         distanceMeters,
-        _score: scoreCandidate({ ...c, confidence }, parsed, near),
+        streetOk,
+        _score: scoreCandidate({ ...c, confidence }, parsed, near, enforceServiceArea),
       };
     })
     .sort((a, b) => b._score - a._score)
@@ -404,22 +417,24 @@ export function mergeAndRank(
       return true;
     });
 
-  const tokens = streetQueryTokens(parsed.streetPart);
-  let picked = ranked.filter((s) => {
-    if (parsed.houseNumber && tokens.length > 0) return s._score >= 40;
+  // Same house number + different street must not surface as a valid candidate.
+  const eligible = ranked.filter((s) => {
+    if (parsed.houseNumber && parsed.streetPart && !s.streetOk) return false;
+    return true;
+  });
+
+  let picked = eligible.filter((s) => {
+    if (parsed.houseNumber && parsed.streetPart) return s._score >= 40;
     return s._score > -20;
   });
 
-  if (picked.length === 0 && tokens.length > 0) {
-    picked = ranked.filter((s) => {
-      const words = streetCoreWords(streetPortion(s.displayName));
-      return tokens.some((t) => words.some((w) => fuzzyStreetMatch(t, w)));
-    });
+  if (picked.length === 0 && parsed.streetPart) {
+    picked = eligible.filter((s) => s.streetOk);
   }
-  if (picked.length === 0) picked = ranked;
+  if (picked.length === 0) picked = eligible;
 
   return picked.slice(0, limit).map(
-    ({ placeId, displayName, lat, lng, confidence, rankReason, distanceMeters }) => ({
+    ({
       placeId,
       displayName,
       lat,
@@ -427,6 +442,25 @@ export function mergeAndRank(
       confidence,
       rankReason,
       distanceMeters,
+      city,
+      state,
+      zip,
+      houseNumber,
+      street,
+      hasGeometry,
+    }) => ({
+      placeId,
+      displayName,
+      lat: hasGeometry && hasUsableGeometry(lat, lng) ? lat : undefined,
+      lng: hasGeometry && hasUsableGeometry(lat, lng) ? lng : undefined,
+      confidence,
+      rankReason,
+      distanceMeters,
+      city,
+      state,
+      zip,
+      houseNumber,
+      street,
     })
   );
 }
@@ -449,12 +483,17 @@ export function autocompleteCacheKey(opts: {
   return `${opts.q.toLowerCase()}|${near}|${opts.city ?? ""}|${opts.state ?? ""}|${area}`;
 }
 
-/** Likely a full address outside the default service area — retry without local filters. */
+/** Used only when nationwide search is intentionally enabled (not Quick Route stops). */
 export function shouldRetryNationwide(q: string, city: string): boolean {
   const lower = q.toLowerCase();
   if (lower.includes(",")) return !lower.includes(city.toLowerCase());
   if (/\b\d{5}(?:-\d{4})?\b/.test(q)) return !/\b466\d{2}\b/.test(q);
   return q.trim().length >= 12;
+}
+
+export function shouldUseNationwideFallback(serviceAreaOnly: boolean, q: string, city: string): boolean {
+  if (serviceAreaOnly) return false;
+  return shouldRetryNationwide(q, city);
 }
 
 export class LruCache<T> {

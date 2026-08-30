@@ -6,12 +6,12 @@ import {
   candidateHasHouseNumber,
   deriveConfidence,
   expandSearchQueries,
-  fuzzyStreetMatch,
   locationBucket,
   mergeAndRank,
   parsePartialAddress,
   scoreCandidate,
-  shouldRetryNationwide,
+  shouldUseNationwideFallback,
+  streetsEquivalent,
   type RankCandidate,
 } from "./addressAutocompleteRank.js";
 
@@ -66,10 +66,18 @@ describe("parsePartialAddress", () => {
 });
 
 describe("expandSearchQueries", () => {
-  it("expands ambiguous Fox query with East/West variants", () => {
+  it("puts the literal South Bend query first for 302 Fox", () => {
     const queries = expandSearchQueries("302 Fox", "South Bend", "IN");
+    assert.equal(queries[0], "302 Fox South Bend IN");
     assert.ok(queries.some((q) => q.includes("East Fox")));
     assert.ok(queries.some((q) => q.includes("West Fox")));
+    assert.ok(queries.indexOf("302 Fox South Bend IN") < queries.findIndex((q) => q.includes("East Fox")));
+  });
+
+  it("does not let guessed directionals outrank an explicit directional", () => {
+    const queries = expandSearchQueries("302 East Fox", "South Bend", "IN");
+    assert.equal(queries[0], "302 East Fox South Bend IN");
+    assert.equal(queries.some((q) => /West Fox/i.test(q)), false);
   });
 
   it("does not append South Bend when searching nationwide", () => {
@@ -78,15 +86,10 @@ describe("expandSearchQueries", () => {
   });
 });
 
-describe("shouldRetryNationwide", () => {
-  it("retries when query names a different city", () => {
-    assert.equal(shouldRetryNationwide("123 Main St, Chicago, IL", "South Bend"), true);
-    assert.equal(shouldRetryNationwide("302 Fox St, South Bend, IN", "South Bend"), false);
-  });
-
-  it("retries for non-local zip codes", () => {
-    assert.equal(shouldRetryNationwide("123 Main St 60601", "South Bend"), true);
-    assert.equal(shouldRetryNationwide("302 Fox 46601", "South Bend"), false);
+describe("shouldUseNationwideFallback", () => {
+  it("never retries nationwide for Quick Route service-area searches", () => {
+    assert.equal(shouldUseNationwideFallback(true, "1616 Philippa St", "South Bend"), false);
+    assert.equal(shouldUseNationwideFallback(true, "123 Main St, Chicago, IL", "South Bend"), false);
   });
 });
 
@@ -173,22 +176,58 @@ describe("mergeAndRank scenarios", () => {
     assert.match(ranked[0].rankReason, /exact match/i);
   });
 
-  it("labels street-only matches", () => {
-    const parsed = parsePartialAddress("302 Fox");
-    const streetOnly = candidate("East Fox Street, South Bend, IN 46601", 41.682, -86.24);
-    const ranked = mergeAndRank([streetOnly], parsed, NEAR_EAST_FOX, 3);
-    assert.equal(ranked[0].confidence, "street_only");
-    assert.match(ranked[0].rankReason, /street match only/i);
+  it("does not surface a same-number wrong-street candidate as exact", () => {
+    const parsed = parsePartialAddress("2221 South Olive St");
+    const michigan = candidate("2221 South Michigan Street, South Bend, IN 46614", 41.66, -86.25, {
+      houseNumberVerified: true,
+      city: "South Bend",
+      zip: "46614",
+      houseNumber: "2221",
+      street: "South Michigan Street",
+    });
+    const ranked = mergeAndRank([michigan], parsed, NEAR_EAST_FOX, 5);
+    assert.equal(ranked.length, 0);
+    assert.notEqual(deriveConfidence(michigan, parsed), "verified_parcel");
+    assert.notEqual(deriveConfidence(michigan, parsed), "verified_rooftop");
+  });
+
+  it("does not classify Jackson→Main as verified_parcel", () => {
+    const parsed = parsePartialAddress("1818 South Jackson St");
+    const main = candidate("1818 South Main Street, South Bend, IN 46614", 41.66, -86.25, {
+      houseNumberVerified: true,
+      city: "South Bend",
+      zip: "46614",
+      houseNumber: "1818",
+      street: "South Main Street",
+    });
+    assert.notEqual(deriveConfidence(main, parsed), "verified_parcel");
+    const ranked = mergeAndRank([main], parsed, NEAR_EAST_FOX, 5);
+    assert.equal(ranked.length, 0);
+  });
+
+  it("filters Fort Wayne results when service area is enforced", () => {
+    const parsed = parsePartialAddress("1616 Philippa St");
+    const fortWayne = candidate("1616 Philippa Street, Fort Wayne, IN 46802", 41.08, -85.14, {
+      houseNumberVerified: true,
+      city: "Fort Wayne",
+      zip: "46802",
+      houseNumber: "1616",
+      street: "Philippa Street",
+    });
+    const ranked = mergeAndRank([fortWayne], parsed, NEAR_EAST_FOX, 5, {
+      enforceServiceArea: true,
+    });
+    assert.equal(ranked.length, 0);
   });
 });
 
 describe("deriveConfidence", () => {
-  it("marks unverified house numbers on failed streets", () => {
+  it("marks OSM housenumber matches as interpolated unless street+number+geometry agree", () => {
     const parsed = parsePartialAddress("302 Fox");
     const c = candidate("302 West Fox Street, South Bend, IN", 41.678, -86.265, {
       houseNumberVerified: false,
     });
-    assert.equal(deriveConfidence(c, parsed), "street_matched_number_unverified");
+    assert.equal(deriveConfidence(c, parsed), "interpolated");
   });
 
   it("marks ambiguous Google results without geometry", () => {
@@ -199,12 +238,21 @@ describe("deriveConfidence", () => {
     });
     assert.equal(deriveConfidence(c, parsed), "ambiguous");
   });
+
+  it("does not assign verified_parcel for a matching number on the wrong street", () => {
+    const parsed = parsePartialAddress("2221 South Olive St");
+    const c = candidate("2221 South Michigan Street, South Bend, IN 46614", 41.66, -86.25, {
+      houseNumberVerified: true,
+      street: "South Michigan Street",
+      houseNumber: "2221",
+    });
+    assert.equal(deriveConfidence(c, parsed), "ambiguous");
+  });
 });
 
-describe("fuzzyStreetMatch", () => {
-  it("matches typo-tolerant street prefixes", () => {
-    assert.equal(fuzzyStreetMatch("ewi", "ewing"), true);
-    assert.equal(fuzzyStreetMatch("fox", "foxboro"), true);
+describe("streetsEquivalent", () => {
+  it("does not treat Fox as Foxboro", () => {
+    assert.equal(streetsEquivalent("Fox", "Foxboro"), false);
   });
 });
 

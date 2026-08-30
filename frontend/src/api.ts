@@ -260,6 +260,12 @@ export interface OpsDashboardResponse {
 
 export interface QuickRouteStopInput {
   address: string;
+  rawInput?: string;
+  lat?: number;
+  lng?: number;
+  placeId?: string;
+  confidence?: string;
+  verificationStatus?: "unresolved" | "needs_review" | "verified";
 }
 
 export interface QuickRouteRequest {

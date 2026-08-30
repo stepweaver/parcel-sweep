@@ -91,6 +91,19 @@ export function isGoogleGeocodingConfigured(): boolean {
   return Boolean(process.env.GOOGLE_GEOCODING_API_KEY?.trim());
 }
 
+/** Geocode only the start/depot address. */
+export async function geocodeStartAddress(
+  startAddress: string
+): Promise<GeocodedStop> {
+  const coords = await resolveAddressCoords(startAddress);
+  return {
+    address: startAddress,
+    packageCount: 0,
+    lat: coords.lat,
+    lng: coords.lng,
+  };
+}
+
 /**
  * Geocodes the start address and all delivery stop addresses.
  * Uses Google when apiKey is provided; otherwise resolveAddressCoords (Google or OSM).

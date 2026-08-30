@@ -2,9 +2,25 @@
 // Request types (existing API)
 // ─────────────────────────────────────────────────────────────
 
+export type VerificationStatus = "unresolved" | "needs_review" | "verified";
+
+export type AddressConfidence =
+  | "verified_rooftop"
+  | "verified_parcel"
+  | "interpolated"
+  | "street_matched_number_unverified"
+  | "street_only"
+  | "ambiguous";
+
 export interface StopInput {
   address: string;
   packageCount?: number;
+  rawInput?: string;
+  lat?: number;
+  lng?: number;
+  placeId?: string;
+  confidence?: AddressConfidence;
+  verificationStatus?: VerificationStatus;
 }
 
 export interface OptimizeRouteRequest {

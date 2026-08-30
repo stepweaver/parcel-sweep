@@ -1446,6 +1446,57 @@ select:focus {
   font-style: italic;
 }
 
+.quick-route-verify-badge {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.quick-route-verify-verified {
+  color: #16a34a;
+}
+
+.quick-route-verify-needs_review {
+  color: #d97706;
+}
+
+.quick-route-verify-unresolved {
+  color: #dc2626;
+}
+
+.quick-route-verify-canonical {
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.quick-route-review-panel {
+  margin-left: 34px;
+  margin-top: 0.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.quick-route-review-hint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.quick-route-review-option {
+  text-align: left;
+  background: var(--hover-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 0.8rem;
+  padding: 0.35rem 0.55rem;
+  cursor: pointer;
+}
+
+.quick-route-review-option:hover {
+  border-color: var(--brand);
+}
+
 label > div:first-child {
   font-family: var(--font-ocr);
   font-size: 0.62rem;

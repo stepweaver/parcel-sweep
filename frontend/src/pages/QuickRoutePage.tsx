@@ -1,20 +1,29 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type QuickRouteResponse } from "../api";
-import { STATIONS, DEFAULT_STATION, SERVICE_AREA } from "../config/operations";
+import { STATIONS, DEFAULT_STATION } from "../config/operations";
+import { QUICK_ROUTE_SERVICE_AREA } from "../config/quickRouteServiceArea";
 import { QuickRouteMap } from "../components/QuickRouteMap";
-import { AddressAutocomplete } from "../components/AddressAutocomplete";
-
-interface StopEntry {
-  id: string;
-  address: string;
-}
+import { AddressAutocomplete, type AddressSuggestion } from "../components/AddressAutocomplete";
+import { googleMapsStopUrl, wazeStopUrl } from "../utils/navigationLinks";
+import {
+  applyStopSuggestion,
+  applyStopTextEdit,
+  confirmableCandidates,
+  migrateSavedStops,
+  newStop,
+  parsePastedAddresses,
+  stopBlocksRoute,
+  stopIsFilled,
+  type QuickRouteStop,
+  type VerificationStatus,
+} from "../utils/quickRouteStops";
 
 type StartMode = "station" | "location" | "custom";
 
 const STORAGE_KEY = "parcel-sweep:quick-route";
 
 interface SavedState {
-  stops: StopEntry[];
+  stops: unknown[];
   startMode: StartMode;
   stationId: string;
   customAddress: string;
@@ -45,22 +54,20 @@ function formatDuration(seconds: number): string {
   return `${h} hr ${m} min`;
 }
 
-function newStop(address = ""): StopEntry {
-  return { id: crypto.randomUUID(), address };
-}
-
 /** Build a Google Maps multi-stop URL from the optimized result. */
 function buildGoogleMapsUrl(result: QuickRouteResponse): string {
-  const addresses = result.route.flatMap((step) => step.stops.map((s) => s.address));
-  const parts = [result.start.address, ...addresses];
-  const encoded = parts.map((a) => encodeURIComponent(a));
-  return `https://www.google.com/maps/dir/${encoded.join("/")}`;
+  const points = [
+    `${result.start.lat},${result.start.lng}`,
+    ...result.route.flatMap((step) => step.stops.map((s) => `${s.lat},${s.lng}`)),
+  ];
+  return `https://www.google.com/maps/dir/${points.join("/")}`;
 }
 
 /** Build a Waze URL for the first stop (Waze doesn't support multi-stop via URL). */
 function buildWazeUrl(result: QuickRouteResponse): string {
-  const first = result.route[0]?.stops[0]?.address ?? "";
-  return `https://waze.com/ul?q=${encodeURIComponent(first)}&navigate=yes`;
+  const first = result.route[0]?.stops[0];
+  if (!first) return "https://waze.com/ul";
+  return wazeStopUrl({ lat: first.lat, lng: first.lng, address: first.address });
 }
 
 /** Build plain-text stop list for clipboard copy. */
@@ -70,15 +77,21 @@ function buildTextList(result: QuickRouteResponse): string {
   )].join("\n");
 }
 
+function verificationLabel(status: VerificationStatus): string {
+  if (status === "verified") return "Verified";
+  if (status === "needs_review") return "Needs review";
+  return "Unresolved";
+}
+
 export function QuickRoutePage() {
   const saved = loadSaved();
 
-  const [stops, setStops] = useState<StopEntry[]>(
-    saved.stops?.length ? saved.stops : [newStop(), newStop()]
-  );
+  const [stops, setStops] = useState<QuickRouteStop[]>(() => migrateSavedStops(saved.stops));
   const [startMode, setStartMode] = useState<StartMode>(saved.startMode ?? "location");
   const [stationId, setStationId] = useState(saved.stationId ?? DEFAULT_STATION.id);
   const [customAddress, setCustomAddress] = useState(saved.customAddress ?? "");
+  const [customStartCoords, setCustomStartCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const customSelectRef = useRef<string | null>(null);
 
   // Geolocation
   const [locating, setLocating] = useState(false);
@@ -134,26 +147,45 @@ export function QuickRoutePage() {
   }, []);
 
   const updateStop = useCallback((id: string, address: string) => {
-    setStops((prev) => prev.map((s) => (s.id === id ? { ...s, address } : s)));
+    setStops((prev) => prev.map((s) => (s.id === id ? applyStopTextEdit(s, address) : s)));
   }, []);
 
-  const handleStopSelect = useCallback((stopId: string) => {
+  const handleStopSelect = useCallback((stopId: string, suggestion: AddressSuggestion, rawInput: string) => {
     setStops((prev) => {
       const idx = prev.findIndex((s) => s.id === stopId);
       if (idx < 0) return prev;
+      const updated = prev.map((s) =>
+        s.id === stopId ? applyStopSuggestion(s, suggestion, rawInput) : s
+      );
+      const selected = updated[idx];
+      if (selected.verificationStatus !== "verified") return updated;
       if (idx === prev.length - 1) {
         const nextStop = newStop();
         requestAnimationFrame(() => {
           inputRefs.current.get(nextStop.id)?.focus();
         });
-        return [...prev, nextStop];
+        return [...updated, nextStop];
       }
-      const nextId = prev[idx + 1].id;
+      const nextId = updated[idx + 1].id;
       requestAnimationFrame(() => {
         inputRefs.current.get(nextId)?.focus();
       });
-      return prev;
+      return updated;
     });
+  }, []);
+
+  const handleConfirmCandidate = useCallback((stopId: string, suggestion: AddressSuggestion) => {
+    setStops((prev) =>
+      prev.map((s) =>
+        s.id === stopId ? applyStopSuggestion(s, suggestion, s.rawInput, { userConfirmed: true }) : s
+      )
+    );
+  }, []);
+
+  const handleSuggestionsChange = useCallback((stopId: string, suggestions: AddressSuggestion[]) => {
+    setStops((prev) =>
+      prev.map((s) => (s.id === stopId ? { ...s, reviewCandidates: suggestions } : s))
+    );
   }, []);
 
   const handleStopKeyDown = useCallback(
@@ -216,18 +248,14 @@ export function QuickRoutePage() {
     handleLocate({ silent: true });
   }, [locatedCoords, locating, handleLocate]);
 
-  /** Parse pasted text into stop entries and append to list. */
+  /** Parse pasted text into stop entries and append to list. Newline is the delimiter. */
   const handlePasteImport = useCallback(() => {
-    const lines = pasteText
-      .split(/[\n,]+/)
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0);
+    const lines = parsePastedAddresses(pasteText);
     if (lines.length === 0) return;
-    const newStops = lines.map((addr) => newStop(addr));
+    const imported = lines.map((addr) => newStop(addr));
     setStops((prev) => {
-      // Replace blank-only stops first, then append the rest
-      const filled = prev.filter((s) => s.address.trim().length > 0);
-      return [...filled, ...newStops];
+      const filled = prev.filter((s) => stopIsFilled(s));
+      return [...filled, ...imported];
     });
     setPasteText("");
     setShowPaste(false);
@@ -244,7 +272,7 @@ export function QuickRoutePage() {
   // Prefer the user's location for autocomplete whenever we have it.
   const stopAutocompleteBias =
     locatedCoords ??
-    (startMode === "station" ? selectedStation.coords : SERVICE_AREA.center);
+    (startMode === "station" ? selectedStation.coords : QUICK_ROUTE_SERVICE_AREA.center);
 
   const customStartBias = locatedCoords ?? undefined;
 
@@ -254,12 +282,19 @@ export function QuickRoutePage() {
     return customAddress.trim();
   })();
 
-  const resolvedStartCoords = startMode === "location" ? locatedCoords ?? undefined : undefined;
+  const resolvedStartCoords =
+    startMode === "location"
+      ? locatedCoords ?? undefined
+      : startMode === "station"
+        ? selectedStation.coords
+        : customStartCoords ?? undefined;
 
-  const filledStops = stops.filter((s) => s.address.trim().length > 0);
+  const filledStops = stops.filter((s) => stopIsFilled(s));
+  const hasUnverifiedStops = filledStops.some((s) => stopBlocksRoute(s));
   const canSubmit =
     !loading &&
     filledStops.length >= 1 &&
+    !hasUnverifiedStops &&
     resolvedStartAddress.length > 0 &&
     (startMode !== "location" || locatedCoords !== null);
 
@@ -271,10 +306,17 @@ export function QuickRoutePage() {
       const res = await api.quickRoute.optimize({
         startAddress: resolvedStartAddress,
         startCoords: resolvedStartCoords,
-        stops: filledStops.map((s) => ({ address: s.address.trim() })),
+        stops: filledStops.map((s) => ({
+          address: s.address.trim(),
+          rawInput: s.rawInput,
+          lat: s.lat,
+          lng: s.lng,
+          placeId: s.placeId,
+          confidence: s.confidence,
+          verificationStatus: s.verificationStatus,
+        })),
       });
       setResult(res);
-      // Scroll to results
       requestAnimationFrame(() => {
         resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       });
@@ -403,7 +445,29 @@ export function QuickRoutePage() {
           {startMode === "custom" && (
             <AddressAutocomplete
               value={customAddress}
-              onChange={setCustomAddress}
+              onChange={(v) => {
+                setCustomAddress(v);
+                if (customSelectRef.current === v) {
+                  customSelectRef.current = null;
+                  return;
+                }
+                setCustomStartCoords(null);
+              }}
+              onSelect={(suggestion) => {
+                customSelectRef.current = suggestion.displayName;
+                setCustomAddress(suggestion.displayName);
+                if (
+                  suggestion.lat !== undefined &&
+                  suggestion.lng !== undefined &&
+                  Number.isFinite(suggestion.lat) &&
+                  Number.isFinite(suggestion.lng) &&
+                  !(suggestion.lat === 0 && suggestion.lng === 0)
+                ) {
+                  setCustomStartCoords({ lat: suggestion.lat, lng: suggestion.lng });
+                } else {
+                  setCustomStartCoords(null);
+                }
+              }}
               placeholder="Your home address, any city"
               serviceAreaOnly={false}
               near={customStartBias}
@@ -447,12 +511,12 @@ export function QuickRoutePage() {
               }}
             >
               <div style={{ fontSize: ".82rem", color: "var(--text-muted)", marginBottom: ".5rem" }}>
-                Paste addresses — one per line, or comma-separated. They'll be added to your stop list.
+                Paste addresses — one per line. Commas stay part of the address.
               </div>
               <textarea
                 value={pasteText}
                 onChange={(e) => setPasteText(e.target.value)}
-                placeholder={"123 Main St, South Bend\n456 Oak Ave, South Bend\n789 Elm St, South Bend"}
+                placeholder={"2221 S Olive St, South Bend, IN 46614\n2107 S Mead St, South Bend, IN 46613"}
                 autoFocus
                 style={{
                   width: "100%",
@@ -481,67 +545,111 @@ export function QuickRoutePage() {
           )}
 
           {/* Individual stop inputs */}
-          <div style={{ display: "flex", flexDirection: "column", gap: ".5rem" }}>
-            {stops.map((stop, idx) => (
-              <div
-                key={stop.id}
-                style={{ display: "flex", alignItems: "center", gap: ".5rem" }}
-              >
-                <div
-                  style={{
-                    width: 26,
-                    height: 26,
-                    borderRadius: "50%",
-                    background: stop.address.trim() ? "var(--brand)" : "var(--border)",
-                    color: stop.address.trim() ? "#fff" : "var(--text-muted)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: 11,
-                    fontWeight: 800,
-                    flexShrink: 0,
-                    userSelect: "none",
-                    transition: "background .15s, color .15s",
-                  }}
-                >
-                  {idx + 1}
+          <div style={{ display: "flex", flexDirection: "column", gap: ".65rem" }}>
+            {stops.map((stop, idx) => {
+              const filled = stopIsFilled(stop);
+              const confirmable = confirmableCandidates(stop.reviewCandidates ?? [], stop.rawInput);
+              return (
+                <div key={stop.id}>
+                  <div style={{ display: "flex", alignItems: "center", gap: ".5rem" }}>
+                    <div
+                      style={{
+                        width: 26,
+                        height: 26,
+                        borderRadius: "50%",
+                        background: stop.verificationStatus === "verified" ? "#16a34a" : stop.address.trim() ? "var(--brand)" : "var(--border)",
+                        color: stop.address.trim() ? "#fff" : "var(--text-muted)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: 11,
+                        fontWeight: 800,
+                        flexShrink: 0,
+                        userSelect: "none",
+                        transition: "background .15s, color .15s",
+                      }}
+                    >
+                      {idx + 1}
+                    </div>
+                    <AddressAutocomplete
+                      ref={(el) => registerRef(stop.id, el)}
+                      value={stop.address}
+                      onChange={(v) => updateStop(stop.id, v)}
+                      onSelect={(suggestion, rawInput) => handleStopSelect(stop.id, suggestion, rawInput)}
+                      onSuggestionsChange={(suggestions) => handleSuggestionsChange(stop.id, suggestions)}
+                      onKeyDown={(e) => handleStopKeyDown(e, stop.id)}
+                      placeholder={`Address ${idx + 1}`}
+                      near={stopAutocompleteBias}
+                      city={QUICK_ROUTE_SERVICE_AREA.city}
+                      state={QUICK_ROUTE_SERVICE_AREA.state}
+                    />
+                    <button
+                      type="button"
+                      title="Remove stop"
+                      onClick={() => removeStop(stop.id)}
+                      disabled={stops.length <= 1}
+                      style={{
+                        width: 30,
+                        height: 30,
+                        borderRadius: "50%",
+                        border: "1.5px solid var(--border)",
+                        background: "transparent",
+                        color: stops.length <= 1 ? "var(--text-meta)" : "var(--text-muted)",
+                        cursor: stops.length <= 1 ? "default" : "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: 16,
+                        lineHeight: 1,
+                        flexShrink: 0,
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                  {filled && (
+                    <div
+                      className={`quick-route-verify-badge quick-route-verify-${stop.verificationStatus}`}
+                      style={{ marginLeft: 34, marginTop: ".28rem" }}
+                    >
+                      {stop.verificationStatus === "verified" && "✓ "}
+                      {verificationLabel(stop.verificationStatus)}
+                      {stop.verificationStatus === "verified" && stop.address !== stop.rawInput && (
+                        <span className="quick-route-verify-canonical"> · {stop.address}</span>
+                      )}
+                    </div>
+                  )}
+                  {filled && stop.verificationStatus === "needs_review" && (
+                    <div className="quick-route-review-panel">
+                      {confirmable.length > 0 ? (
+                        <>
+                          <div className="quick-route-review-hint">Choose the correct address:</div>
+                          {confirmable.map((candidate) => (
+                            <button
+                              key={candidate.placeId}
+                              type="button"
+                              className="quick-route-review-option"
+                              onClick={() => handleConfirmCandidate(stop.id, candidate)}
+                            >
+                              {candidate.displayName}
+                            </button>
+                          ))}
+                        </>
+                      ) : (
+                        <div className="quick-route-review-hint">
+                          No matching South Bend 46613/46614 candidate yet. Edit the address or pick a suggestion.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {filled && stop.verificationStatus === "unresolved" && (
+                    <div className="quick-route-review-hint" style={{ marginLeft: 34 }}>
+                      Could not resolve this address. Pick a suggestion or edit the text.
+                    </div>
+                  )}
                 </div>
-                <AddressAutocomplete
-                  ref={(el) => registerRef(stop.id, el)}
-                  value={stop.address}
-                  onChange={(v) => updateStop(stop.id, v)}
-                  onSelect={() => handleStopSelect(stop.id)}
-                  onKeyDown={(e) => handleStopKeyDown(e, stop.id)}
-                  placeholder={`Address ${idx + 1}`}
-                  near={stopAutocompleteBias}
-                  city={SERVICE_AREA.city}
-                  state={SERVICE_AREA.state}
-                />
-                <button
-                  type="button"
-                  title="Remove stop"
-                  onClick={() => removeStop(stop.id)}
-                  disabled={stops.length <= 1}
-                  style={{
-                    width: 30,
-                    height: 30,
-                    borderRadius: "50%",
-                    border: "1.5px solid var(--border)",
-                    background: "transparent",
-                    color: stops.length <= 1 ? "var(--text-meta)" : "var(--text-muted)",
-                    cursor: stops.length <= 1 ? "default" : "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: 16,
-                    lineHeight: 1,
-                    flexShrink: 0,
-                  }}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <button
@@ -574,6 +682,12 @@ export function QuickRoutePage() {
           <div style={{ color: "#dc2626", fontSize: ".9rem", marginBottom: "1rem" }}>{error}</div>
         )}
 
+        {hasUnverifiedStops && filledStops.length > 0 && (
+          <p className="text-muted" style={{ fontSize: ".82rem", marginTop: ".75rem", marginBottom: ".5rem" }}>
+            Verify every stop before generating a route.
+          </p>
+        )}
+
         <button
           className="btn-primary"
           style={{ width: "100%", fontSize: "1rem", padding: ".75rem" }}
@@ -589,7 +703,7 @@ export function QuickRoutePage() {
 
         {loading && (
           <p className="text-muted" style={{ fontSize: ".82rem", marginTop: ".5rem", textAlign: "center" }}>
-            Geocoding {filledStops.length} addresses and running optimizer — may take a few seconds.
+            Optimizing {filledStops.length} verified stops — may take a few seconds.
           </p>
         )}
 
@@ -744,7 +858,11 @@ export function QuickRoutePage() {
                 const mins = Math.round(step.driveSecondsFromPrevious / 60);
                 const isLast = idx === result.route.length - 1;
                 // Build a single-stop Google Maps link for this stop
-                const stopNavUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(step.stops[0]?.address ?? "")}`;
+                const stopNavUrl = googleMapsStopUrl({
+                  lat: step.stops[0]?.lat ?? 0,
+                  lng: step.stops[0]?.lng ?? 0,
+                  address: step.stops[0]?.address,
+                });
                 return (
                   <div
                     key={step.clusterId}
