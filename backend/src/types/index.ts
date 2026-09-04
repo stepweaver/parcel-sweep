@@ -26,6 +26,7 @@ export interface StopInput {
   verificationMethod?: VerificationMethod;
   verificationProvider?: string;
   manualVerifiedAt?: string;
+  express?: boolean;
 }
 
 export interface OptimizeRouteRequest {
@@ -53,6 +54,7 @@ export interface GeocodedStop {
   packageCount: number;
   lat: number;
   lng: number;
+  express?: boolean;
 }
 
 export interface Cluster {
@@ -80,6 +82,7 @@ export interface RouteStepStop {
   packageCount: number;
   lat: number;
   lng: number;
+  express?: boolean;
 }
 
 export interface RouteStep {

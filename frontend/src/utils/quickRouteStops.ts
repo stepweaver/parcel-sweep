@@ -43,6 +43,7 @@ export interface QuickRouteStop {
   duplicateKept?: boolean;
   manualVerifiedAt?: string;
   manualReverseGeocodeLabel?: string;
+  express: boolean;
 }
 
 const STRONG_CONFIDENCE: ReadonlySet<AddressConfidence> = new Set([
@@ -57,6 +58,7 @@ export function newStop(address = ""): QuickRouteStop {
     searchInput: address,
     address,
     verificationStatus: "unresolved",
+    express: false,
   };
 }
 
@@ -67,6 +69,7 @@ export function newStopFromSegment(segment: SegmentedAddress, id?: string): Quic
     searchInput: segment.searchInput,
     address: segment.searchInput,
     verificationStatus: "unresolved",
+    express: segment.express === true,
   };
 }
 
@@ -98,6 +101,7 @@ export function migrateQuickRouteStop(raw: unknown): QuickRouteStop | null {
       searchInput: address,
       address,
       verificationStatus: "unresolved",
+      express: false,
     };
   }
 
@@ -112,6 +116,7 @@ export function migrateQuickRouteStop(raw: unknown): QuickRouteStop | null {
   const placeId = typeof raw.placeId === "string" ? raw.placeId : undefined;
   const confidence = isAddressConfidence(raw.confidence) ? raw.confidence : undefined;
   const duplicateKept = raw.duplicateKept === true;
+  const express = raw.express === true;
   const verificationMethod: VerificationMethod | undefined =
     raw.verificationMethod === "manual_pin" || raw.verificationMethod === "provider"
       ? raw.verificationMethod
@@ -132,6 +137,7 @@ export function migrateQuickRouteStop(raw: unknown): QuickRouteStop | null {
       searchInput,
       address,
       verificationStatus: "unresolved",
+      express,
     };
   }
 
@@ -149,6 +155,7 @@ export function migrateQuickRouteStop(raw: unknown): QuickRouteStop | null {
         manualVerifiedAt,
         manualReverseGeocodeLabel,
         duplicateKept,
+        express,
       };
     }
     return {
@@ -164,6 +171,7 @@ export function migrateQuickRouteStop(raw: unknown): QuickRouteStop | null {
       verificationMethod: "provider",
       verificationProvider,
       duplicateKept,
+      express,
     };
   }
 
@@ -174,6 +182,7 @@ export function migrateQuickRouteStop(raw: unknown): QuickRouteStop | null {
     address,
     verificationStatus,
     duplicateKept,
+    express,
   };
 }
 
@@ -189,9 +198,9 @@ function isAddressConfidence(value: unknown): value is AddressConfidence {
 }
 
 export function migrateSavedStops(raw: unknown): QuickRouteStop[] {
-  if (!Array.isArray(raw)) return [newStop(), newStop()];
+  if (!Array.isArray(raw)) return [];
   const stops = raw.map(migrateQuickRouteStop).filter((s): s is QuickRouteStop => s !== null);
-  return stops.length > 0 ? stops : [newStop(), newStop()];
+  return stops;
 }
 
 export interface AddressEvaluation {
@@ -256,6 +265,7 @@ export function applyStopTextEdit(stop: QuickRouteStop, text: string): QuickRout
     manualVerifiedAt: undefined,
     manualReverseGeocodeLabel: undefined,
     duplicateKept: stop.duplicateKept,
+    express: stop.express,
   };
 }
 
@@ -427,7 +437,7 @@ export function mergeImportedStops(
   incoming: QuickRouteStop[],
   replace: boolean
 ): QuickRouteStop[] {
-  if (replace) return incoming.length > 0 ? incoming : [newStop(), newStop()];
+  if (replace) return incoming;
   return [...existing.filter(stopIsFilled), ...incoming];
 }
 
@@ -597,3 +607,58 @@ export function verificationSourceCopy(stop: QuickRouteStop): { title: string; d
   }
   return { title: "Ready" };
 }
+
+export function toggleStopExpress(stop: QuickRouteStop): QuickRouteStop {
+  return { ...stop, express: !stop.express };
+}
+
+export interface DeletedStopSnapshot {
+  stop: QuickRouteStop;
+  index: number;
+}
+
+export function snapshotDeleteStop(
+  stops: QuickRouteStop[],
+  id: string
+): { next: QuickRouteStop[]; snapshot: DeletedStopSnapshot | null } {
+  const index = stops.findIndex((s) => s.id === id);
+  if (index < 0) return { next: stops, snapshot: null };
+  return {
+    next: stops.filter((s) => s.id !== id),
+    snapshot: { stop: stops[index], index },
+  };
+}
+
+export function restoreDeletedStop(
+  stops: QuickRouteStop[],
+  snapshot: DeletedStopSnapshot
+): QuickRouteStop[] {
+  const next = [...stops];
+  const index = Math.min(Math.max(snapshot.index, 0), next.length);
+  next.splice(index, 0, snapshot.stop);
+  return next;
+}
+
+export function stopStreetLine(stop: QuickRouteStop): string {
+  if (stop.verificationStatus === "verified" || stop.suggestedCorrection) {
+    return streetPortion(stop.address) || matchInputFor(stop) || stop.rawInput;
+  }
+  return matchInputFor(stop) || stop.rawInput || stop.address;
+}
+
+export function stopLocalityLine(stop: QuickRouteStop): string | undefined {
+  const fromAddress = extractCityStateZip(stop.address);
+  const city = fromAddress.city;
+  const state = fromAddress.state ?? "IN";
+  const zip = fromAddress.zip;
+  if (city && zip) return `${city}, ${state} ${zip}`;
+  if (city) return `${city}, ${state}`;
+  if (stop.suggestedCorrection) {
+    const c = extractCityStateZip(stop.suggestedCorrection.candidate.displayName);
+    if (c.city && c.zip) return `${c.city}, ${c.state ?? "IN"} ${c.zip}`;
+  }
+  return undefined;
+}
+
+export const UNDO_DELETE_MS = 8000;
+

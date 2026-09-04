@@ -104,7 +104,14 @@ async function requestGoogleValidation(input: string): Promise<GoogleAddressVali
         validateStatus: (status) => status < 500,
       }
     );
-    if (response.status >= 400) {
+  if (response.status >= 400) {
+      const apiMessage =
+        typeof response.data?.error?.message === "string" ? response.data.error.message : "";
+      if (response.status === 403 && /has not been used|is disabled/i.test(apiMessage)) {
+        throw new GoogleAddressValidationUnavailableError(
+          "Google Address Validation API is not enabled on this Google Cloud project"
+        );
+      }
       throw new GoogleAddressValidationUnavailableError(
         `Google Address Validation HTTP ${response.status}`
       );

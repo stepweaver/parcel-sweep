@@ -241,13 +241,15 @@ function googleResult(
 /**
  * Resolve a single address using the same Phase 1 evaluateAddressSuggestion
  * semantics as autocomplete. Local Photon/Nominatim/Places run first.
- * Google Address Validation is used only when configured and local providers
- * cannot produce a strong verified candidate. Never throws away the row.
+ * Google Address Validation is used when configured. Field capture prefers
+ * Google first; autocomplete-style lookups still try local providers first.
+ * Never throws away the row.
  */
 export async function resolveOneAddress(
   entry: BatchResolveInput,
   search: AddressSearchFn = searchAddressAutocomplete,
-  googleValidate?: GoogleValidateFn | null
+  googleValidate?: GoogleValidateFn | null,
+  options?: { preferGoogle?: boolean }
 ): Promise<BatchResolveResult> {
   const rawInput = entry.rawInput;
   const normalizedInput = (entry.searchInput ?? entry.rawInput).replace(/\s+/g, " ").trim();
@@ -258,6 +260,7 @@ export async function resolveOneAddress(
         ? productionGoogleValidate
         : null
       : googleValidate;
+  const preferGoogle = options?.preferGoogle === true;
 
   const base = {
     id: entry.id,
@@ -274,6 +277,29 @@ export async function resolveOneAddress(
     };
     logBatchRow(result, 0);
     return result;
+  }
+
+  if (preferGoogle && googleFn) {
+    try {
+      const decision = await googleFn(matchInput);
+      if (decision) {
+        const google = googleResult(base, decision);
+        if (
+          google.status === "verified" ||
+          google.suggestedCorrection ||
+          google.status === "needs_review"
+        ) {
+          logBatchRow(google, google.candidates?.length ?? 0);
+          return google;
+        }
+      }
+    } catch (err) {
+      console.warn(
+        "[geocode:google] provider failure",
+        entry.id,
+        err instanceof Error ? err.message : err
+      );
+    }
   }
 
   let local: BatchResolveResult | undefined;
@@ -348,6 +374,7 @@ export async function resolveAddressBatch(
     search?: AddressSearchFn;
     concurrency?: number;
     googleValidate?: GoogleValidateFn | null;
+    preferGoogle?: boolean;
   }
 ): Promise<{ results: BatchResolveResult[]; count: ReturnType<typeof summarizeVerificationCounts> }> {
   const search = options?.search ?? searchAddressAutocomplete;
@@ -358,9 +385,10 @@ export async function resolveAddressBatch(
       : options?.search
         ? null
         : undefined;
+  const preferGoogle = options?.preferGoogle === true;
 
   const results = await mapPool(entries, concurrency, (entry) =>
-    resolveOneAddress(entry, search, googleValidate)
+    resolveOneAddress(entry, search, googleValidate, { preferGoogle })
   );
 
   const count = summarizeVerificationCounts(

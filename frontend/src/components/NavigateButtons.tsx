@@ -3,6 +3,7 @@ import {
   googleMapsStopUrl,
   wazeStopUrl,
   appleMapsStopUrl,
+  mapquestStopUrl,
   type NavTarget,
 } from "../utils/navigationLinks";
 
@@ -28,6 +29,7 @@ export function NavigateButtons({ target, size = "md", showLabels = true }: Navi
   const buttons = [
     { label: "Google", url: googleMapsStopUrl(target) },
     { label: "Waze", url: wazeStopUrl(target) },
+    { label: "MapQuest", url: mapquestStopUrl(target) },
     { label: "Apple", url: appleMapsStopUrl(target) },
   ];
 

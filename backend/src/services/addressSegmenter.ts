@@ -6,6 +6,7 @@
 export interface SegmentedAddress {
   rawInput: string;
   searchInput: string;
+  express: boolean;
 }
 
 const DELIMITER_PHRASE =
@@ -85,6 +86,48 @@ export function normalizeWhitespace(text: string): string {
 
 function stripEdgePunctuation(text: string): string {
   return text.replace(/^[,.;:!?-]+/, "").replace(/[,.;:!?-]+$/, "").trim();
+}
+
+const STREET_SUFFIX =
+  "(?:parkways?|pkwy|boulevards?|blvd|avenues?|ave|streets?|st|roads?|rd|drives?|dr|lanes?|ln|courts?|ct|places?|pl|ways?|circles?|cir|terraces?|ter|trails?|trl)";
+
+const AFTER_STREET_NEW_HOUSE = new RegExp(
+  String.raw`(?:\b${STREET_SUFFIX}\b|\bexpress\b)[.,;:!?]*\s+(?=\d{2,5}\b)`,
+  "gi"
+);
+
+/**
+ * Strip a standalone "express" token. rawInput keeps the original words;
+ * search/address input does not treat express as part of the street.
+ */
+export function extractExpressFlag(text: string): { text: string; express: boolean } {
+  const trimmed = normalizeWhitespace(text);
+  if (!trimmed) return { text: "", express: false };
+  const express = /\bexpress\b/i.test(trimmed);
+  const stripped = normalizeWhitespace(trimmed.replace(/\bexpress\b[.,;:!?]*/gi, " "));
+  return { text: stripped, express };
+}
+
+/**
+ * Split a spoken or punctuated run when a new house number follows a street suffix.
+ * "2221 South Olive Street 2107 South Mead Street" → two addresses.
+ */
+export function splitOnNewHouseAfterStreet(text: string): string[] {
+  const trimmed = normalizeWhitespace(text);
+  if (!trimmed) return [];
+  const parts: string[] = [];
+  const re = new RegExp(AFTER_STREET_NEW_HOUSE.source, AFTER_STREET_NEW_HOUSE.flags);
+  let last = 0;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(trimmed)) !== null) {
+    const splitAt = match.index + match[0].length;
+    const chunk = stripEdgePunctuation(trimmed.slice(last, splitAt));
+    if (chunk) parts.push(chunk);
+    last = splitAt;
+  }
+  const tail = stripEdgePunctuation(trimmed.slice(last));
+  if (tail) parts.push(tail);
+  return parts.length > 0 ? parts : [];
 }
 
 /**
@@ -172,12 +215,20 @@ export function segmentAddresses(text: string): SegmentedAddress[] {
   const out: SegmentedAddress[] = [];
 
   for (const part of parts) {
-    const rawInput = normalizeWhitespace(stripEdgePunctuation(part));
-    if (!rawInput) continue;
-    out.push({
-      rawInput,
-      searchInput: normalizeSpokenHouseNumber(rawInput),
-    });
+    const rawBlock = normalizeWhitespace(stripEdgePunctuation(part));
+    if (!rawBlock) continue;
+    const pieces = splitOnNewHouseAfterStreet(rawBlock);
+    for (const piece of pieces.length > 0 ? pieces : [rawBlock]) {
+      const rawInput = normalizeWhitespace(stripEdgePunctuation(piece));
+      if (!rawInput) continue;
+      const extracted = extractExpressFlag(rawInput);
+      const searchable = extracted.text || rawInput;
+      out.push({
+        rawInput,
+        searchInput: normalizeSpokenHouseNumber(searchable),
+        express: extracted.express,
+      });
+    }
   }
 
   return out;

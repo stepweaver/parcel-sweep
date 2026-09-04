@@ -65,6 +65,7 @@ export async function prepareOptimizePoints(
       packageCount: stop.packageCount ?? 1,
       lat: validated.stop.lat,
       lng: validated.stop.lng,
+      express: stop.express === true,
     });
   }
 
@@ -138,6 +139,7 @@ optimizeRouteRouter.post(
           packageCount: s.packageCount,
           lat: s.lat,
           lng: s.lng,
+          express: s.express === true,
         })),
         alerts: alertsPerCluster[i],
       }));

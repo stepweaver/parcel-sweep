@@ -10,6 +10,8 @@ import { Server as SocketServer } from "socket.io";
 import { getDb } from "./db/index.js";
 import { isGoogleGeocodingConfigured } from "./services/geocoder.js";
 import { isGoogleAddressValidationCassEnabled, isGoogleAddressValidationConfigured } from "./services/googleAddressValidation.js";
+import { isOpenAiConfigured } from "./services/addressParser.js";
+import { isTranscriptionConfigured } from "./services/transcribeAudio.js";
 import { optimizeRouteRouter } from "./routes/optimizeRoute.js";
 import { manifestsRouter } from "./routes/manifests.js";
 import { createRoutesRouter } from "./routes/routes.js";
@@ -79,6 +81,8 @@ app.get("/health", (_req, res) => {
       googleGeocoding: isGoogleGeocodingConfigured(),
       googleAddressValidation: isGoogleAddressValidationConfigured(),
       googleAddressValidationCass: isGoogleAddressValidationCassEnabled(),
+      openaiTranscription: isTranscriptionConfigured(),
+      openaiAddressParser: isOpenAiConfigured(),
       geocodingFallback: "nominatim",
       osrm: process.env.OSRM_BASE_URL ?? "http://router.project-osrm.org",
     },
@@ -167,6 +171,17 @@ httpServer.listen(PORT, () => {
   console.log(`  GET   /api/admin/routes`);
   console.log(`  GET   /api/routes/:id/export/{gpx,kml,csv}`);
   console.log(`  Geocoding:   ${isGoogleGeocodingConfigured() ? "Google API key set" : "Google not set — using OpenStreetMap fallback"}`);
+  console.log(
+    `  Address Validation: ${
+      isGoogleAddressValidationConfigured()
+        ? "configured"
+        : "not configured — enable Address Validation API, then set GOOGLE_ADDRESS_VALIDATION_API_KEY"
+    }`
+  );
+  if (!isGoogleAddressValidationConfigured()) {
+    console.log("  Enable: https://console.cloud.google.com/apis/library/addressvalidation.googleapis.com");
+  }
+  console.log(`  Capture AI:  ${isOpenAiConfigured() ? "OpenAI transcription + parser ready" : "OpenAI not set — paste/heuristic parse still work"}`);
   console.log(`  WebSocket /socket.io\n`);
 });
 

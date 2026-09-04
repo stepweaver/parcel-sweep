@@ -204,4 +204,21 @@ describe("prepareOptimizePoints", () => {
     if (result.ok) return;
     assert.equal(result.status, 422);
   });
+
+  it("carries express through locked coordinates", async () => {
+    const result = await prepareOptimizePoints(
+      {
+        startAddress: "4015 S Main St, South Bend, IN 46614",
+        startCoords: { lat: 41.652, lng: -86.2511 },
+        stops: [{ ...SB_STOP, express: true }],
+      },
+      async () => {
+        throw new Error("geocoder should not be called");
+      }
+    );
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.stops[0].express, true);
+    assert.equal(result.stops[0].lat, SB_STOP.lat);
+  });
 });

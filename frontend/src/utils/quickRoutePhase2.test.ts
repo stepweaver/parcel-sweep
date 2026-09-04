@@ -94,6 +94,15 @@ describe("frontend segmenter (A, B, C, D, E, F)", () => {
   it("appends only committed transcript text", () => {
     assert.equal(appendTranscript("2221 South Olive", "next address"), "2221 South Olive next address");
   });
+
+  it("splits a punctuated dictate run and flags express", () => {
+    const parts = segmentAddresses(
+      "2221 South Olive Street. 2107 South Mead Street. 1818 South Jackson Street express."
+    );
+    assert.equal(parts.length, 3);
+    assert.equal(parts[2].express, true);
+    assert.equal(parts[2].searchInput.toLowerCase().includes("express"), false);
+  });
 });
 
 describe("frontend count invariant and route gate (I, O)", () => {
@@ -116,12 +125,14 @@ describe("frontend count invariant and route gate (I, O)", () => {
       lng: -86.251,
       placeId: "p",
       verificationStatus: "verified",
+      express: false,
     };
     const review: QuickRouteStop = {
       id: "2",
       rawInput: "1818 South Jackson St",
       address: "1818 South Jackson St",
       verificationStatus: "needs_review",
+      express: false,
     };
     assert.equal(stopBlocksRoute(verified), false);
     assert.equal(stopBlocksRoute(review), true);
@@ -154,6 +165,7 @@ describe("apply batch result (E, M, P)", () => {
     const segment = {
       rawInput: "twenty two twenty one south olive street",
       searchInput: "2221 south olive street",
+      express: false,
     };
     const stop = newStopFromSegment(segment, "same-id");
     const olive = suggestion({
@@ -195,6 +207,7 @@ describe("apply batch result (E, M, P)", () => {
     const stop = newStopFromSegment({
       rawInput: "2221 South Olive St",
       searchInput: "2221 South Olive St",
+      express: false,
     });
     const michigan = suggestion({
       displayName: "2221 South Michigan Street, South Bend, IN 46614",

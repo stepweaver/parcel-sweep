@@ -272,6 +272,7 @@ export interface QuickRouteStopInput {
   verificationMethod?: VerificationMethod;
   verificationProvider?: string;
   manualVerifiedAt?: string;
+  express?: boolean;
 }
 
 export interface BatchResolveRequestEntry {
@@ -327,6 +328,22 @@ export interface BatchCountSummary {
   ok: boolean;
 }
 
+export interface CaptureAddress {
+  id: string;
+  rawInput: string;
+  addressInput: string;
+  express: boolean;
+}
+
+export interface CaptureResponse {
+  transcript: string;
+  parser: "heuristic" | "openai";
+  parsed: CaptureAddress[];
+  results: BatchResolveResult[];
+  count: BatchCountSummary;
+  error?: string;
+}
+
 export interface BatchResolveResponse {
   results: BatchResolveResult[];
   count: BatchCountSummary;
@@ -345,6 +362,7 @@ export interface QuickRouteStepStop {
   packageCount: number;
   lat: number;
   lng: number;
+  express?: boolean;
 }
 
 export interface QuickRouteStep {
@@ -582,11 +600,18 @@ export const api = {
         }>;
       }>(`/api/geocode/autocomplete?${params.toString()}`);
     },
-    resolveBatch: (addresses: BatchResolveRequestEntry[]) =>
+    resolveBatch: (addresses: BatchResolveRequestEntry[], options?: { preferGoogle?: boolean }) =>
       apiFetch<BatchResolveResponse>("/api/geocode/resolve-batch", {
         method: "POST",
-        body: JSON.stringify({ addresses }),
+        body: JSON.stringify({ addresses, preferGoogle: options?.preferGoogle === true }),
       }),
+    capture: (payload: { transcript?: string; audioBase64?: string; audioMimeType?: string }) =>
+      apiFetch<CaptureResponse>("/api/geocode/capture", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+    captureConfig: () =>
+      apiFetch<{ transcription: boolean; openaiParser: boolean }>("/api/geocode/capture-config"),
     reverse: (lat: number, lng: number) =>
       apiFetch<{ label: string }>(`/api/geocode/reverse?lat=${encodeURIComponent(String(lat))}&lng=${encodeURIComponent(String(lng))}`),
   },

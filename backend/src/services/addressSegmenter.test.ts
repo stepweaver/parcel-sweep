@@ -149,3 +149,32 @@ describe("field-test parser count (F)", () => {
     assert.equal(parsePastedAddresses(FIELD_TEST_15.join("\n")).length, 15);
   });
 });
+
+describe("consecutive spoken addresses and express", () => {
+  it("splits a punctuated dictate run without next-address", () => {
+    const parts = segmentAddresses(
+      "2221 South Olive Street. 2107 South Mead Street. 1918 West Indiana Avenue. 1818 South Jackson Street express. 2002 South Carlisle Street."
+    );
+    assert.equal(parts.length, 5);
+    assert.equal(parts[0].rawInput, "2221 South Olive Street");
+    assert.equal(parts[3].express, true);
+    assert.equal(parts[3].searchInput.toLowerCase().includes("express"), false);
+    assert.equal(parts[4].rawInput, "2002 South Carlisle Street");
+    assert.equal(parts[4].express, false);
+  });
+
+  it("splits digit house numbers that follow a street suffix", () => {
+    const parts = segmentAddresses(
+      "2221 South Olive Street 2107 South Mead Street 1918 West Indiana Avenue"
+    );
+    assert.equal(parts.length, 3);
+  });
+
+  it("does not treat express as part of the search street", () => {
+    const [entry] = segmentAddresses("1818 South Jackson Street express");
+    assert.equal(entry.express, true);
+    assert.match(entry.rawInput, /express/i);
+    assert.equal(entry.searchInput.toLowerCase().includes("jackson"), true);
+    assert.equal(entry.searchInput.toLowerCase().includes("express"), false);
+  });
+});

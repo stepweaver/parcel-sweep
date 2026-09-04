@@ -250,6 +250,55 @@ describe("Google Address Validation is a fallback, not a free-for-all", () => {
     assert.equal(result.candidate?.placeId, "ChIJ-mead");
     assert.equal(result.id, "mead");
   });
+
+  it("field capture prefers Google before local providers", async () => {
+    let localCalls = 0;
+    const search: AddressSearchFn = async () => {
+      localCalls += 1;
+      return [oliveVerified];
+    };
+    const googleValidate = async () => ({
+      status: "verified" as const,
+      candidate: {
+        placeId: "ChIJ-google-olive",
+        displayName: "2221 South Olive Street, South Bend, IN 46613, USA",
+        lat: 41.66,
+        lng: -86.24,
+        confidence: "verified_parcel" as const,
+        city: "South Bend",
+        state: "IN",
+        zip: "46613",
+        houseNumber: "2221",
+        street: "South Olive Street",
+      },
+      meta: {
+        addressComplete: true,
+        validationGranularity: "PREMISE",
+        geocodeGranularity: "PREMISE",
+        hasUnconfirmedComponents: false,
+        hasInferredComponents: false,
+        hasReplacedComponents: false,
+        geometryOk: true,
+        materialStreetOrHouseChange: false,
+        unconfirmedStreetOrHouse: false,
+        inServiceArea: true,
+        changedComponents: [],
+        lat: 41.66,
+        lng: -86.24,
+        placeId: "ChIJ-google-olive",
+      },
+    });
+    const result = await resolveOneAddress(
+      { id: "olive", rawInput: "2221 South Olive St", searchInput: "2221 South Olive St" },
+      search,
+      googleValidate,
+      { preferGoogle: true }
+    );
+    assert.equal(result.status, "verified");
+    assert.equal(result.verificationProvider, "google_address_validation");
+    assert.equal(result.candidate?.placeId, "ChIJ-google-olive");
+    assert.equal(localCalls, 0);
+  });
 });
 
 describe("batch-created verified stop bypasses optimization geocoder (N)", () => {

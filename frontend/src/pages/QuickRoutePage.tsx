@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type BatchCountSummary, type BatchResolveCandidate, type QuickRouteResponse } from "../api";
 import { STATIONS, DEFAULT_STATION } from "../config/operations";
-import { QUICK_ROUTE_SERVICE_AREA } from "../config/quickRouteServiceArea";
 import { QuickRouteMap } from "../components/QuickRouteMap";
 import { AddressAutocomplete, type AddressSuggestion } from "../components/AddressAutocomplete";
-import { BatchEntryPanel } from "../components/BatchEntryPanel";
-import { googleMapsStopUrl, wazeStopUrl } from "../utils/navigationLinks";
-import { segmentAddresses, appendTranscript } from "../utils/addressSegmenter";
+import { CapturePanel, type CaptureSubmitPayload } from "../components/CapturePanel";
+import { ReviewStopList } from "../components/ReviewStopList";
+import { googleMapsStopUrl, mapquestFullRouteUrl, wazeStopUrl } from "../utils/navigationLinks";
+import { appendTranscript } from "../utils/addressSegmenter";
 import {
   detectProbableDuplicates,
   keepDuplicateStop,
@@ -19,29 +19,24 @@ import {
   applyResolvedBatchEntry,
   applyStopSearchEdit,
   applyStopSuggestion,
-  applyStopTextEdit,
   applySuggestedCorrection,
-  confirmableCandidates,
   confirmManualPin,
   adjustManualPin,
   matchInputFor,
   mergeImportedStops,
   migrateSavedStops,
   manualPinMapCenter,
-  newStop,
   newStopFromSegment,
-  stopAllowsAdjustPin,
-  stopAllowsManualPin,
+  restoreDeletedStop,
+  snapshotDeleteStop,
   stopBlocksRoute,
   stopIsFilled,
+  toggleStopExpress,
+  UNDO_DELETE_MS,
+  type DeletedStopSnapshot,
   type QuickRouteStop,
   type VerificationStatus,
 } from "../utils/quickRouteStops";
-import {
-  diagnosticStatusDetail,
-  friendlyUnresolvedMessage,
-  stopStatusDetail,
-} from "../utils/quickRouteCopy";
 import { ManualPinPicker } from "../components/ManualPinPicker";
 
 type StartMode = "station" | "location" | "custom";
@@ -94,6 +89,14 @@ function buildWazeUrl(result: QuickRouteResponse): string {
   const first = result.route[0]?.stops[0];
   if (!first) return "https://waze.com/ul";
   return wazeStopUrl({ lat: first.lat, lng: first.lng, address: first.address });
+}
+
+/** Build a MapQuest multi-stop directions URL from the optimized result. */
+function buildMapQuestUrl(result: QuickRouteResponse): string {
+  return mapquestFullRouteUrl(
+    result.start,
+    result.route.flatMap((step) => step.stops)
+  );
 }
 
 /** Build plain-text stop list for clipboard copy. */
@@ -157,11 +160,7 @@ function toBatchEntry(result: {
 }
 
 function initialStops(raw: unknown): QuickRouteStop[] {
-  const migrated = migrateSavedStops(raw);
-  const filled = migrated.filter(stopIsFilled);
-  const empty = migrated.find((s) => !stopIsFilled(s));
-  if (filled.length === 0) return [empty ?? newStop()];
-  return empty ? [...filled, empty] : filled;
+  return migrateSavedStops(raw).filter(stopIsFilled);
 }
 
 const START_MODE_LABEL: Record<StartMode, string> = {
@@ -169,56 +168,6 @@ const START_MODE_LABEL: Record<StartMode, string> = {
   station: "Home station",
   custom: "Custom address",
 };
-
-function RemoveStopButton({
-  disabled,
-  onClick,
-}: {
-  disabled: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className="qr-remove-btn"
-      title="Remove stop"
-      aria-label="Remove stop"
-      onClick={onClick}
-      disabled={disabled}
-    >
-      ×
-    </button>
-  );
-}
-
-function DuplicatePrompt({
-  onKeep,
-  onRemove,
-}: {
-  onKeep: () => void;
-  onRemove: () => void;
-}) {
-  return (
-    <div className="qr-duplicate">
-      <p>You may have added this stop twice.</p>
-      <div className="batch-duplicate-actions">
-        <button type="button" className="batch-action-btn" onClick={onKeep}>
-          Keep both
-        </button>
-        <button type="button" className="batch-action-btn" onClick={onRemove}>
-          Remove one
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/** Exception cards are for checked stops that still need a decision — not live typing. */
-function stopShowsAsException(stop: QuickRouteStop): boolean {
-  if (!stopIsFilled(stop)) return false;
-  if (stop.verificationStatus === "needs_review") return true;
-  return stop.verificationStatus === "unresolved" && Boolean(stop.unresolvedReason);
-}
 
 export function QuickRoutePage() {
   const saved = loadSaved();
@@ -247,8 +196,10 @@ export function QuickRoutePage() {
   const [batchSummary, setBatchSummary] = useState<BatchCountSummary | null>(null);
   const [batchCountError, setBatchCountError] = useState("");
   const [batchResolveError, setBatchResolveError] = useState("");
-  const [verifiedExpanded, setVerifiedExpanded] = useState(false);
   const [pinStopId, setPinStopId] = useState<string | null>(null);
+  const [serverTranscription, setServerTranscription] = useState(false);
+  const [undoSnapshot, setUndoSnapshot] = useState<DeletedStopSnapshot | null>(null);
+  const undoTimerRef = useRef<number | null>(null);
 
   // Submission
   const [loading, setLoading] = useState(false);
@@ -256,73 +207,55 @@ export function QuickRoutePage() {
   const [result, setResult] = useState<QuickRouteResponse | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const inputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
-  const addStopRef = useRef<HTMLButtonElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
   const autoLocateAttempted = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api.geocode.captureConfig().then((config) => {
+      if (!cancelled) setServerTranscription(config.transcription);
+    }).catch(() => {
+      if (!cancelled) setServerTranscription(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Persist to localStorage whenever key state changes
   useEffect(() => {
     saveState({ stops, startMode, stationId, customAddress });
   }, [stops, startMode, stationId, customAddress]);
 
-  const registerRef = useCallback((id: string, el: HTMLInputElement | null) => {
-    if (el) inputRefs.current.set(id, el);
-    else inputRefs.current.delete(id);
-  }, []);
-
-  const addStop = useCallback(() => {
-    const s = newStop();
-    setStops((prev) => [...prev, s]);
-    requestAnimationFrame(() => {
-      inputRefs.current.get(s.id)?.focus();
-    });
-  }, []);
-
   const removeStop = useCallback((id: string) => {
     setStops((prev) => {
-      if (prev.length <= 1) return prev;
-      const idx = prev.findIndex((s) => s.id === id);
-      const next = prev.filter((s) => s.id !== id);
-      requestAnimationFrame(() => {
-        const target = next[Math.min(idx, next.length - 1)];
-        if (target) inputRefs.current.get(target.id)?.focus();
-        else addStopRef.current?.focus();
-      });
+      const { next, snapshot } = snapshotDeleteStop(prev, id);
+      if (snapshot) {
+        if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
+        setUndoSnapshot(snapshot);
+        undoTimerRef.current = window.setTimeout(() => {
+          setUndoSnapshot(null);
+          undoTimerRef.current = null;
+        }, UNDO_DELETE_MS);
+      }
       return next;
     });
+    setPinStopId((current) => (current === id ? null : current));
+    setEditingStopId((current) => (current === id ? null : current));
   }, []);
 
-  const updateStop = useCallback((id: string, address: string) => {
-    setStops((prev) => prev.map((s) => (s.id === id ? applyStopTextEdit(s, address) : s)));
-  }, []);
+  const handleUndoDelete = useCallback(() => {
+    if (!undoSnapshot) return;
+    if (undoTimerRef.current !== null) {
+      window.clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = null;
+    }
+    setStops((prev) => restoreDeletedStop(prev, undoSnapshot));
+    setUndoSnapshot(null);
+  }, [undoSnapshot]);
 
-  const handleStopSelect = useCallback((stopId: string, suggestion: AddressSuggestion, rawInput: string) => {
-    setStops((prev) => {
-      const idx = prev.findIndex((s) => s.id === stopId);
-      if (idx < 0) return prev;
-      const updated = prev.map((s) =>
-        s.id === stopId
-          ? applyStopSuggestion(s, suggestion, s.rawInput.trim() ? s.rawInput : rawInput, {
-              matchInput: rawInput,
-            })
-          : s
-      );
-      const selected = updated[idx];
-      if (selected.verificationStatus !== "verified") return updated;
-      if (idx === prev.length - 1) {
-        const nextStop = newStop();
-        requestAnimationFrame(() => {
-          inputRefs.current.get(nextStop.id)?.focus();
-        });
-        return [...updated, nextStop];
-      }
-      const nextId = updated[idx + 1].id;
-      requestAnimationFrame(() => {
-        inputRefs.current.get(nextId)?.focus();
-      });
-      return updated;
-    });
+  const handleToggleExpress = useCallback((id: string) => {
+    setStops((prev) => prev.map((s) => (s.id === id ? toggleStopExpress(s) : s)));
   }, []);
 
   const handleConfirmCandidate = useCallback((stopId: string, suggestion: AddressSuggestion) => {
@@ -368,33 +301,6 @@ export function QuickRoutePage() {
     setPinStopId(null);
   }, []);
 
-  const handleSuggestionsChange = useCallback((stopId: string, suggestions: AddressSuggestion[]) => {
-    setStops((prev) =>
-      prev.map((s) => (s.id === stopId ? { ...s, reviewCandidates: suggestions } : s))
-    );
-  }, []);
-
-  const handleStopKeyDown = useCallback(
-    (e: React.KeyboardEvent, id: string) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        const idx = stops.findIndex((s) => s.id === id);
-        if (idx === stops.length - 1) {
-          addStop();
-        } else {
-          inputRefs.current.get(stops[idx + 1].id)?.focus();
-        }
-      } else if (e.key === "Backspace") {
-        const stop = stops.find((s) => s.id === id);
-        if (stop?.address === "" && stops.length > 1) {
-          e.preventDefault();
-          removeStop(id);
-        }
-      }
-    },
-    [stops, addStop, removeStop]
-  );
-
   const handleLocate = useCallback((options?: { silent?: boolean }) => {
     if (!navigator.geolocation) {
       if (!options?.silent) {
@@ -438,9 +344,10 @@ export function QuickRoutePage() {
     setStops((prev) => prev.map((s) => (s.id === id ? applyStopSearchEdit(s, text) : s)));
   }, []);
 
-  const handleResolveBatch = useCallback(async () => {
-    const segments = segmentAddresses(transcript);
-    if (segments.length === 0) {
+  const handleCapture = useCallback(async (payload: CaptureSubmitPayload) => {
+    const hasAudio = Boolean(payload.audioBase64);
+    const hasText = Boolean(payload.transcript?.trim());
+    if (!hasAudio && !hasText) {
       setBatchResolveError("Add at least one address.");
       return;
     }
@@ -448,15 +355,18 @@ export function QuickRoutePage() {
     setBatchCountError("");
     setResolvingBatch(true);
     try {
-      const payload = segments.map((segment) => ({
-        id: crypto.randomUUID(),
-        rawInput: segment.rawInput,
-        searchInput: segment.searchInput,
-      }));
-      const res = await api.geocode.resolveBatch(payload);
+      const res = await api.geocode.capture(payload);
+      if (res.transcript) setTranscript(res.transcript);
       const byId = new Map(res.results.map((r) => [r.id, r]));
-      const incoming = payload.map((entry, i) => {
-        const stop = newStopFromSegment(segments[i], entry.id);
+      const incoming = res.parsed.map((entry) => {
+        const stop = newStopFromSegment(
+          {
+            rawInput: entry.rawInput,
+            searchInput: entry.addressInput,
+            express: entry.express,
+          },
+          entry.id
+        );
         const result = byId.get(entry.id);
         if (!result) {
           return {
@@ -467,25 +377,24 @@ export function QuickRoutePage() {
         return applyResolvedBatchEntry(stop, toBatchEntry(result));
       });
       const count = summarizeVerificationCounts(
-        segments.length,
+        res.parsed.length,
         incoming.map((s) => s.verificationStatus)
       );
       setBatchSummary(count);
-      if (!count.ok || res.results.length !== segments.length || (res.count && !res.count.ok)) {
+      if (!count.ok || res.results.length !== res.parsed.length || (res.count && !res.count.ok)) {
         setBatchCountError(
           "Not every address was counted. Route creation stays blocked until this is fixed."
         );
       }
       setStops((prev) => mergeImportedStops(prev, incoming, clearExisting));
       setBatchOpen(false);
-      setVerifiedExpanded(false);
       setEditingStopId(null);
     } catch (err) {
       setBatchResolveError(err instanceof Error ? err.message : "We couldn't check those addresses.");
     } finally {
       setResolvingBatch(false);
     }
-  }, [transcript, clearExisting]);
+  }, [clearExisting]);
 
   const handleResolveAgain = useCallback(async (stopId: string) => {
     const stop = stops.find((s) => s.id === stopId);
@@ -493,13 +402,16 @@ export function QuickRoutePage() {
     setResolvingStopId(stopId);
     setBatchResolveError("");
     try {
-      const res = await api.geocode.resolveBatch([
-        {
-          id: stop.id,
-          rawInput: stop.rawInput,
-          searchInput: matchInputFor(stop),
-        },
-      ]);
+      const res = await api.geocode.resolveBatch(
+        [
+          {
+            id: stop.id,
+            rawInput: stop.rawInput,
+            searchInput: matchInputFor(stop),
+          },
+        ],
+        { preferGoogle: true }
+      );
       const result = res.results[0];
       if (!result || result.id !== stop.id) {
         setBatchCountError(
@@ -542,6 +454,36 @@ export function QuickRoutePage() {
     }
   }, [stops]);
 
+  const handleResolveOpenIssues = useCallback(async () => {
+    const open = stops.filter(
+      (s) => stopIsFilled(s) && (s.verificationStatus === "unresolved" || s.verificationStatus === "needs_review")
+    );
+    if (open.length === 0) return;
+    setResolvingBatch(true);
+    setBatchResolveError("");
+    try {
+      const res = await api.geocode.resolveBatch(
+        open.map((s) => ({
+          id: s.id,
+          rawInput: s.rawInput,
+          searchInput: matchInputFor(s),
+        })),
+        { preferGoogle: true }
+      );
+      const byId = new Map(res.results.map((r) => [r.id, r]));
+      setStops((prev) =>
+        prev.map((s) => {
+          const result = byId.get(s.id);
+          return result ? applyResolvedBatchEntry(s, toBatchEntry(result)) : s;
+        })
+      );
+    } catch {
+      setBatchResolveError("We couldn't re-check those addresses.");
+    } finally {
+      setResolvingBatch(false);
+    }
+  }, [stops]);
+
   const handleKeepDuplicate = useCallback((stopId: string) => {
     setStops((prev) => keepDuplicateStop(prev, stopId));
   }, []);
@@ -549,12 +491,12 @@ export function QuickRoutePage() {
   const handleRemoveDuplicate = useCallback((stopId: string) => {
     setStops((prev) => {
       const next = removeDuplicateStop(prev, stopId);
-      return next.length > 0 ? next : [newStop()];
+      return next;
     });
   }, []);
 
   const handleClearAll = useCallback(() => {
-    setStops([newStop()]);
+    setStops([]);
     setResult(null);
     setError("");
     setBatchSummary(null);
@@ -563,16 +505,15 @@ export function QuickRoutePage() {
     setTranscript("");
     setPinStopId(null);
     setBatchOpen(true);
-    setVerifiedExpanded(false);
     setEditingStopId(null);
+    setUndoSnapshot(null);
+    if (undoTimerRef.current !== null) {
+      window.clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = null;
+    }
   }, []);
 
   const selectedStation = STATIONS.find((s) => s.id === stationId) ?? DEFAULT_STATION;
-
-  // Prefer the user's location for autocomplete whenever we have it.
-  const stopAutocompleteBias =
-    locatedCoords ??
-    (startMode === "station" ? selectedStation.coords : QUICK_ROUTE_SERVICE_AREA.center);
 
   const customStartBias = locatedCoords ?? undefined;
 
@@ -596,12 +537,7 @@ export function QuickRoutePage() {
   );
   const readiness = useMemo(() => summarizeRouteReadiness(filledStops), [filledStops]);
   const pinStop = pinStopId ? stops.find((s) => s.id === pinStopId) : undefined;
-  const attentionStops = filledStops.filter(stopShowsAsException);
-  const workingStops = filledStops.filter((s) => !stopShowsAsException(s) && stopBlocksRoute(s));
-  const readyStops = filledStops.filter((s) => !stopBlocksRoute(s));
-  const emptyStops = stops.filter((s) => !stopIsFilled(s));
   const isEmptyFlow = filledStops.length === 0;
-  const readyCount = readiness.providerVerified + readiness.manuallyVerified;
   const duplicateByStop = useMemo(() => {
     const map = new Map<string, ProbableDuplicate>();
     for (const flag of duplicates) map.set(flag.stopId, flag);
@@ -654,6 +590,7 @@ export function QuickRoutePage() {
           verificationMethod: s.verificationMethod,
           verificationProvider: s.verificationProvider,
           manualVerifiedAt: s.manualVerifiedAt,
+          express: s.express,
         })),
       });
       setResult(res);
@@ -685,7 +622,7 @@ export function QuickRoutePage() {
           <div>
             <h1 className="qr-title">Quick Route</h1>
             <p className="qr-lede">
-              Add your stops. We’ll check the addresses and put them in a good order.
+              Speak a batch of addresses, glance at the review list, then go.
             </p>
           </div>
           {(filledStops.length > 0 || result) && (
@@ -827,27 +764,28 @@ export function QuickRoutePage() {
 
         <section className="qr-section qr-add" aria-labelledby="qr-add-label">
           <h2 id="qr-add-label" className="qr-section-heading">
-            Add stops
+            Capture
           </h2>
           {isEmptyFlow && (
             <p className="qr-section-copy">
-              Paste a list, speak them, or add addresses one at a time.
+              Dictate the whole list, then review anything that needs a look.
             </p>
           )}
 
-          <BatchEntryPanel
+          <CapturePanel
             transcript={transcript}
             onTranscriptChange={setTranscript}
             onAppendFinal={(text) => setTranscript((prev) => appendTranscript(prev, text))}
             clearExisting={clearExisting}
             onClearExistingChange={setClearExisting}
-            resolving={resolvingBatch}
-            onResolve={() => void handleResolveBatch()}
+            capturing={resolvingBatch}
+            onCapture={(payload) => void handleCapture(payload)}
             collapsed={!batchOpen && !isEmptyFlow}
             onExpand={() => setBatchOpen(true)}
             onCollapse={() => setBatchOpen(false)}
-            resolveError={batchResolveError}
+            captureError={batchResolveError}
             hasStops={!isEmptyFlow}
+            serverTranscription={serverTranscription}
           />
 
           {batchCountError && (
@@ -856,320 +794,69 @@ export function QuickRoutePage() {
             </p>
           )}
 
+
           {filledStops.length > 0 && (
-            <div className="qr-summary" role="status">
-              {readiness.readyToRoute ? (
-                <>
-                  <div className="qr-summary-lead">
-                    <span className="qr-ready-mark" aria-hidden="true">✓</span>
-                    {readiness.total} stop{readiness.total === 1 ? "" : "s"} ready
-                  </div>
-                  <p>Everything looks good.</p>
-                </>
-              ) : (
-                <>
-                  <div className="qr-summary-lead">{readiness.total} stops</div>
-                  <div className="qr-summary-line is-ready">
-                    <span aria-hidden="true">✓</span> {readyCount} ready
-                  </div>
+            <>
+              <div className="qr-summary" role="status">
+                <div className="qr-summary-lead">{readiness.total} address{readiness.total === 1 ? '' : 'es'}</div>
+                <div className="qr-summary-line is-ready">
+                  <span aria-hidden="true">✓</span> {readiness.providerVerified + readiness.manuallyVerified} verified
+                </div>
+                {readiness.needsReview > 0 && (
                   <div className="qr-summary-line is-attention">
-                    <span aria-hidden="true">!</span> {readiness.attentionCount} need attention
+                    <span aria-hidden="true">!</span> {readiness.needsReview} need{readiness.needsReview === 1 ? 's' : ''} review
                   </div>
-                  <p>
-                    Fix {readiness.attentionCount === 1 ? "this stop" : `these ${readiness.attentionCount} stops`} to
-                    continue.
-                  </p>
-                </>
-              )}
-              <details className="qr-details">
-                <summary>Details</summary>
-                <ul>
-                  <li>{readiness.providerVerified} checked automatically</li>
-                  <li>{readiness.manuallyVerified} pinned by you</li>
-                  <li>{readiness.needsReview} check this</li>
-                  <li>{readiness.unresolved} need a location</li>
-                  {batchSummary && (
-                    <li>
-                      Counted {readiness.accountedFor} of {batchSummary.parsed}
-                      {readiness.ok && batchSummary.ok ? "" : " — mismatch"}
-                    </li>
-                  )}
-                </ul>
-              </details>
-            </div>
-          )}
-
-          {attentionStops.length > 0 && (
-            <div className="qr-attention">
-              <div className="qr-attention-heading">
-                Needs attention
-                <span className="qr-attention-count">
-                  {attentionStops.length} stop{attentionStops.length === 1 ? "" : "s"}
-                </span>
+                )}
+                {readiness.unresolved > 0 && (
+                  <div className="qr-summary-line is-unresolved">
+                    <span aria-hidden="true">?</span> {readiness.unresolved} unresolved
+                  </div>
+                )}
+                {batchSummary && !batchSummary.ok && (
+                  <div className="qr-summary-line is-unresolved">Counted {batchSummary.accountedFor} of {batchSummary.parsed}</div>
+                )}
               </div>
-              {attentionStops.map((stop) => {
-                const matchInput = matchInputFor(stop);
-                const confirmable = confirmableCandidates(stop.reviewCandidates ?? [], matchInput);
-                const duplicate = duplicateByStop.get(stop.id);
-                const editing = editingStopId === stop.id;
-                const label = stop.searchInput || stop.rawInput || stop.address;
-                return (
-                  <div key={stop.id} className="qr-exception-card">
-                    <div className="qr-exception-head">
-                      <div className="qr-exception-address">{label}</div>
-                      <RemoveStopButton
-                        disabled={stops.length <= 1}
-                        onClick={() => removeStop(stop.id)}
-                      />
-                    </div>
-                    {stop.verificationStatus === "unresolved" && (
-                      <p className="qr-exception-help">{friendlyUnresolvedMessage(stop.unresolvedReason)}</p>
-                    )}
-                    {stop.verificationStatus === "needs_review" && confirmable.length === 0 && !stop.suggestedCorrection && (
-                      <p className="qr-exception-help">{stopStatusDetail(stop)}</p>
-                    )}
-                    {stop.suggestedCorrection && (
-                      <div className="qr-exception-block">
-                        <p className="qr-exception-help">Did you mean:</p>
-                        <div className="qr-candidate-name">
-                          {stop.suggestedCorrection.candidate.displayName}
-                        </div>
-                        <button
-                          type="button"
-                          className="qr-action-btn qr-action-btn--primary"
-                          onClick={() => handleAcceptCorrection(stop.id)}
-                        >
-                          Use this address
-                        </button>
-                      </div>
-                    )}
-                    {confirmable.length > 0 && (
-                      <div className="qr-exception-block">
-                        <p className="qr-exception-help">Is this the right address?</p>
-                        {confirmable.map((candidate) => (
-                          <button
-                            key={candidate.placeId}
-                            type="button"
-                            className="qr-candidate-btn"
-                            onClick={() => handleConfirmCandidate(stop.id, candidate)}
-                          >
-                            <span className="qr-candidate-name">{candidate.displayName}</span>
-                            <span>Yes, use this</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    {duplicate && (
-                      <DuplicatePrompt
-                        onKeep={() => handleKeepDuplicate(stop.id)}
-                        onRemove={() => handleRemoveDuplicate(stop.id)}
-                      />
-                    )}
-                    <div className="qr-exception-actions">
-                      <button
-                        type="button"
-                        className="qr-action-btn"
-                        onClick={() => void handleResolveAgain(stop.id)}
-                        disabled={resolvingStopId === stop.id}
-                      >
-                        {resolvingStopId === stop.id ? "Checking…" : "Try again"}
-                      </button>
-                      {stopAllowsManualPin(stop) && (
-                        <button
-                          type="button"
-                          className="qr-action-btn qr-action-btn--primary"
-                          onClick={() => setPinStopId(stop.id)}
-                        >
-                          Pin on map
-                        </button>
-                      )}
-                    </div>
-                    {editing ? (
-                      <div className="qr-exception-edit">
-                        <AddressAutocomplete
-                          ref={(el) => registerRef(stop.id, el)}
-                          value={stop.address}
-                          onChange={(v) => handleSearchEdit(stop.id, v)}
-                          onSelect={(suggestion, rawInput) => handleStopSelect(stop.id, suggestion, rawInput)}
-                          onSuggestionsChange={(suggestions) => handleSuggestionsChange(stop.id, suggestions)}
-                          placeholder="Edit address"
-                          near={stopAutocompleteBias}
-                          city={QUICK_ROUTE_SERVICE_AREA.city}
-                          state={QUICK_ROUTE_SERVICE_AREA.state}
-                        />
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        className="qr-text-btn qr-edit-address"
-                        onClick={() => setEditingStopId(stop.id)}
-                      >
-                        Edit address
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
 
-          {readyStops.length > 0 && (
-            <div className="qr-ready-block">
-              {attentionStops.length > 0 ? (
+              <ReviewStopList
+                stops={filledStops}
+                editingStopId={editingStopId}
+                resolvingStopId={resolvingStopId}
+                resolvingAll={resolvingBatch}
+                duplicateByStop={duplicateByStop}
+                onToggleExpress={handleToggleExpress}
+                onDelete={removeStop}
+                onStartEdit={(id) => setEditingStopId(id)}
+                onEditChange={handleSearchEdit}
+                onSubmitEdit={(id) => {
+                  setEditingStopId(null);
+                  void handleResolveAgain(id);
+                }}
+                onCancelEdit={() => setEditingStopId(null)}
+                onUseSuggestion={handleAcceptCorrection}
+                onConfirmCandidate={(id, placeId) => {
+                  const stop = stops.find((s) => s.id === id);
+                  const candidate = stop?.reviewCandidates?.find((c) => c.placeId === placeId);
+                  if (candidate) handleConfirmCandidate(id, candidate);
+                }}
+                onPin={setPinStopId}
+                onResolveAgain={(id) => void handleResolveAgain(id)}
+                onKeepDuplicate={handleKeepDuplicate}
+                onRemoveDuplicate={handleRemoveDuplicate}
+              />
+
+              {readiness.attentionCount > 0 && (
                 <button
                   type="button"
-                  className="batch-verified-toggle"
-                  onClick={() => setVerifiedExpanded(!verifiedExpanded)}
-                  aria-expanded={verifiedExpanded}
+                  className="btn-secondary qr-resolve-again"
+                  onClick={() => void handleResolveOpenIssues()}
+                  disabled={resolvingBatch}
                 >
-                  <span className="qr-ready-mark" aria-hidden="true">✓</span>
-                  {readyStops.length} stop{readyStops.length === 1 ? "" : "s"} ready
-                  <span className="qr-ready-toggle-hint">{verifiedExpanded ? "Hide" : "Show"}</span>
+                  {resolvingBatch ? 'Checking…' : 'Resolve Again'}
                 </button>
-              ) : null}
-              {(attentionStops.length === 0 || verifiedExpanded) &&
-                readyStops.map((stop) => {
-                  const idx = stops.findIndex((s) => s.id === stop.id);
-                  const duplicate = duplicateByStop.get(stop.id);
-                  const pinned = stop.verificationMethod === "manual_pin";
-                  const detail = diagnosticStatusDetail(stop);
-                  return (
-                    <div key={stop.id} className="qr-ready-row-wrap">
-                      <div className="qr-ready-row">
-                        <div className="qr-stop-num" aria-hidden="true">
-                          {idx + 1}
-                        </div>
-                        <AddressAutocomplete
-                          ref={(el) => registerRef(stop.id, el)}
-                          value={stop.address}
-                          onChange={(v) => updateStop(stop.id, v)}
-                          onSelect={(suggestion, rawInput) => handleStopSelect(stop.id, suggestion, rawInput)}
-                          onSuggestionsChange={(suggestions) => handleSuggestionsChange(stop.id, suggestions)}
-                          onKeyDown={(e) => handleStopKeyDown(e, stop.id)}
-                          placeholder={`Address ${idx + 1}`}
-                          near={stopAutocompleteBias}
-                          city={QUICK_ROUTE_SERVICE_AREA.city}
-                          state={QUICK_ROUTE_SERVICE_AREA.state}
-                        />
-                        <span
-                          className={`qr-ready-mark${pinned ? " is-pinned" : ""}`}
-                          title={detail ?? "Ready"}
-                        >
-                          ✓{pinned ? " pinned" : ""}
-                        </span>
-                        <RemoveStopButton
-                          disabled={stops.length <= 1}
-                          onClick={() => removeStop(stop.id)}
-                        />
-                      </div>
-                      {stopAllowsAdjustPin(stop) && (
-                        <button
-                          type="button"
-                          className="qr-text-btn"
-                          onClick={() => setPinStopId(stop.id)}
-                        >
-                          Adjust pin
-                        </button>
-                      )}
-                      {duplicate && (
-                        <DuplicatePrompt
-                          onKeep={() => handleKeepDuplicate(stop.id)}
-                          onRemove={() => handleRemoveDuplicate(stop.id)}
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-            </div>
+              )}
+            </>
           )}
 
-          <div className="qr-one-at-a-time">
-            {!isEmptyFlow && <div className="qr-one-at-a-time-label">or add one at a time</div>}
-            <div className="qr-empty-rows">
-              {workingStops.map((stop) => {
-                const idx = stops.findIndex((s) => s.id === stop.id);
-                const duplicate = duplicateByStop.get(stop.id);
-                return (
-                  <div key={stop.id} className="qr-ready-row-wrap">
-                    <div className="qr-empty-row">
-                      <div className="qr-stop-num is-empty" aria-hidden="true">
-                        {idx + 1}
-                      </div>
-                      <AddressAutocomplete
-                        ref={(el) => registerRef(stop.id, el)}
-                        value={stop.address}
-                        onChange={(v) => updateStop(stop.id, v)}
-                        onSelect={(suggestion, rawInput) => handleStopSelect(stop.id, suggestion, rawInput)}
-                        onSuggestionsChange={(suggestions) => handleSuggestionsChange(stop.id, suggestions)}
-                        onKeyDown={(e) => handleStopKeyDown(e, stop.id)}
-                        placeholder={`Address ${idx + 1}`}
-                        near={stopAutocompleteBias}
-                        city={QUICK_ROUTE_SERVICE_AREA.city}
-                        state={QUICK_ROUTE_SERVICE_AREA.state}
-                      />
-                      <RemoveStopButton
-                        disabled={stops.length <= 1}
-                        onClick={() => removeStop(stop.id)}
-                      />
-                    </div>
-                    {stopAllowsManualPin(stop) && (
-                      <button
-                        type="button"
-                        className="qr-text-btn"
-                        onClick={() => setPinStopId(stop.id)}
-                      >
-                        Pin on map
-                      </button>
-                    )}
-                    {duplicate && (
-                      <DuplicatePrompt
-                        onKeep={() => handleKeepDuplicate(stop.id)}
-                        onRemove={() => handleRemoveDuplicate(stop.id)}
-                      />
-                    )}
-                  </div>
-                );
-              })}
-              {emptyStops.map((stop) => {
-                const idx = stops.findIndex((s) => s.id === stop.id);
-                return (
-                  <div key={stop.id} className="qr-empty-row">
-                    {!isEmptyFlow && (
-                      <div className="qr-stop-num is-empty" aria-hidden="true">
-                        {idx + 1}
-                      </div>
-                    )}
-                    <AddressAutocomplete
-                      ref={(el) => registerRef(stop.id, el)}
-                      value={stop.address}
-                      onChange={(v) => updateStop(stop.id, v)}
-                      onSelect={(suggestion, rawInput) => handleStopSelect(stop.id, suggestion, rawInput)}
-                      onSuggestionsChange={(suggestions) => handleSuggestionsChange(stop.id, suggestions)}
-                      onKeyDown={(e) => handleStopKeyDown(e, stop.id)}
-                      placeholder={isEmptyFlow ? "Add an address" : `Address ${idx + 1}`}
-                      near={stopAutocompleteBias}
-                      city={QUICK_ROUTE_SERVICE_AREA.city}
-                      state={QUICK_ROUTE_SERVICE_AREA.state}
-                    />
-                    <RemoveStopButton
-                      disabled={stops.length <= 1}
-                      onClick={() => removeStop(stop.id)}
-                    />
-                  </div>
-                );
-              })}
-            </div>
-            {!isEmptyFlow && (
-              <button
-                ref={addStopRef}
-                type="button"
-                className="qr-add-stop"
-                onClick={addStop}
-              >
-                Add another stop
-              </button>
-            )}
-          </div>
         </section>
 
         <section className="qr-section qr-cta" aria-labelledby="qr-cta-label">
@@ -1205,7 +892,7 @@ export function QuickRoutePage() {
                 <span className="spinner" /> Building your route…
               </>
             ) : (
-              "Create route"
+              "Generate Route"
             )}
           </button>
         </section>
@@ -1241,6 +928,14 @@ export function QuickRoutePage() {
                 className="qr-nav-link qr-nav-link--waze"
               >
                 Open in Waze
+              </a>
+              <a
+                href={buildMapQuestUrl(result)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="qr-nav-link qr-nav-link--mapquest"
+              >
+                Open in MapQuest
               </a>
               <button type="button" className="qr-nav-copy" onClick={() => void handleCopyList()}>
                 {copied ? "Copied" : "Copy stop list"}
@@ -1287,6 +982,7 @@ export function QuickRoutePage() {
                           className={i === 0 ? "qr-order-title" : "qr-order-sub"}
                         >
                           {s.address}
+                          {s.express ? <span className="qr-express-badge">Express</span> : null}
                         </div>
                       ))}
                       {step.alerts.length > 0 && (
@@ -1315,6 +1011,14 @@ export function QuickRoutePage() {
           </div>
         )}
       </div>
+      {undoSnapshot && (
+        <div className="qr-undo-toast" role="status">
+          Stop removed.
+          <button type="button" className="qr-text-btn" onClick={handleUndoDelete}>
+            Undo
+          </button>
+        </div>
+      )}
       {pinStop && (
         <ManualPinPicker
           addressLabel={matchInputFor(pinStop) || pinStop.rawInput || pinStop.address}

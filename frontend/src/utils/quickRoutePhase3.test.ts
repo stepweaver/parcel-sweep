@@ -26,6 +26,7 @@ function manualStop(overrides: Partial<QuickRouteStop> = {}): QuickRouteStop {
     searchInput: "1818 South Jackson St",
     address: "1818 South Jackson St",
     verificationStatus: "unresolved",
+    express: false,
     ...overrides,
   };
 }
@@ -111,6 +112,7 @@ describe("Phase 3 manual verification (A–L)", () => {
       placeId: "place-indiana",
       verificationStatus: "verified",
       verificationMethod: "provider",
+      express: false,
     };
     const manual = confirmManualPin(manualStop({ id: "m" }), { stopId: "m", ...IN_BOUNDS });
     const unresolved = manualStop({ id: "u", rawInput: "1616 Philippa St", address: "1616 Philippa St" });
@@ -137,6 +139,7 @@ describe("Phase 3 manual verification (A–L)", () => {
       address: "1918 W Indiana Ave",
       verificationStatus: "verified",
       verificationMethod: "provider",
+      express: false,
     };
     const manual = confirmManualPin(manualStop({ id: "2" }), { stopId: "2", ...IN_BOUNDS });
     const review = manualStop({ id: "3", verificationStatus: "needs_review" });

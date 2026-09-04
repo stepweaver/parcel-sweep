@@ -6,6 +6,13 @@ import {
   resolveAddressBatch,
   type BatchResolveInput,
 } from "../services/batchResolve.js";
+import { isOpenAiConfigured, parseAddressList } from "../services/addressParser.js";
+import {
+  decodeAudioBase64,
+  isTranscriptionConfigured,
+  MAX_CAPTURE_AUDIO_BYTES,
+  transcribeCaptureAudio,
+} from "../services/transcribeAudio.js";
 import { hasUsableGeometry } from "../services/addressMatch.js";
 
 export const geocodeRouter = Router();
@@ -141,7 +148,8 @@ geocodeRouter.post("/resolve-batch", async (req: Request, res: Response): Promis
   }
 
   try {
-    const { results, count } = await resolveAddressBatch(entries);
+    const preferGoogle = (req.body as { preferGoogle?: unknown })?.preferGoogle === true;
+    const { results, count } = await resolveAddressBatch(entries, { preferGoogle });
     res.json({ results, count });
   } catch (err) {
     console.warn(
@@ -157,6 +165,143 @@ geocodeRouter.post("/resolve-batch", async (req: Request, res: Response): Promis
       candidates: [],
     }));
     res.json({
+      results: fallbackResults,
+      count: {
+        parsed: entries.length,
+        verified: 0,
+        needsReview: 0,
+        unresolved: entries.length,
+        accountedFor: entries.length,
+        ok: true,
+      },
+    });
+  }
+});
+
+geocodeRouter.get("/capture-config", (_req: Request, res: Response): void => {
+  res.json({
+    transcription: isTranscriptionConfigured(),
+    openaiParser: isOpenAiConfigured(),
+  });
+});
+
+/**
+ * POST /api/geocode/capture
+ *
+ * Field capture: optional audio → transcript → structured addresses →
+ * Google-first batch validation. Never drops a parsed row.
+ */
+geocodeRouter.post("/capture", async (req: Request, res: Response): Promise<void> => {
+  const body = req.body as {
+    transcript?: unknown;
+    audioBase64?: unknown;
+    audioMimeType?: unknown;
+  };
+
+  let transcript =
+    typeof body.transcript === "string" ? body.transcript.replace(/\s+/g, " ").trim() : "";
+
+  if (!transcript && typeof body.audioBase64 === "string" && body.audioBase64.trim()) {
+    if (!isTranscriptionConfigured()) {
+      res.status(503).json({
+        error: "Server transcription isn’t configured. Paste or type the addresses instead.",
+      });
+      return;
+    }
+    try {
+      const audio = decodeAudioBase64(body.audioBase64);
+      if (audio.length > MAX_CAPTURE_AUDIO_BYTES) {
+        res.status(400).json({ error: "Recording is too large. Try a shorter take." });
+        return;
+      }
+      const mime = typeof body.audioMimeType === "string" ? body.audioMimeType : "audio/webm";
+      transcript = await transcribeCaptureAudio(audio, mime);
+    } catch (err) {
+      res.status(422).json({
+        error: err instanceof Error ? err.message : "We couldn't transcribe that recording.",
+      });
+      return;
+    }
+  }
+
+  if (!transcript) {
+    res.status(400).json({ error: "Add a recording or a list of addresses." });
+    return;
+  }
+
+  const parsed = await parseAddressList(transcript);
+  if (parsed.addresses.length === 0) {
+    res.status(422).json({
+      error: "We couldn't find any addresses in that input.",
+      transcript,
+      parsed: [],
+      results: [],
+      count: {
+        parsed: 0,
+        verified: 0,
+        needsReview: 0,
+        unresolved: 0,
+        accountedFor: 0,
+        ok: true,
+      },
+      parser: parsed.source,
+    });
+    return;
+  }
+  if (parsed.addresses.length > BATCH_RESOLVE_MAX_ADDRESSES) {
+    res.status(400).json({
+      error: `Batch is limited to ${BATCH_RESOLVE_MAX_ADDRESSES} addresses.`,
+      transcript,
+    });
+    return;
+  }
+
+  const entries: BatchResolveInput[] = parsed.addresses.map((address) => ({
+    id: crypto.randomUUID(),
+    rawInput: address.rawInput,
+    searchInput: address.addressInput,
+  }));
+
+  try {
+    const { results, count } = await resolveAddressBatch(entries, { preferGoogle: true });
+    if (results.length !== entries.length || !count.ok) {
+      console.error("[capture] count invariant failed", {
+        parsed: parsed.addresses.length,
+        resolved: results.length,
+        count,
+      });
+    }
+    res.json({
+      transcript,
+      parser: parsed.source,
+      parsed: parsed.addresses.map((address, index) => ({
+        id: entries[index].id,
+        rawInput: address.rawInput,
+        addressInput: address.addressInput,
+        express: address.express,
+      })),
+      results,
+      count,
+    });
+  } catch (err) {
+    console.warn("[capture] resolve failed", err instanceof Error ? err.message : err);
+    const fallbackResults = entries.map((entry) => ({
+      id: entry.id,
+      rawInput: entry.rawInput,
+      normalizedInput: (entry.searchInput ?? entry.rawInput).trim(),
+      status: "unresolved" as const,
+      reason: "Address service unavailable — try again.",
+      candidates: [],
+    }));
+    res.json({
+      transcript,
+      parser: parsed.source,
+      parsed: parsed.addresses.map((address, index) => ({
+        id: entries[index].id,
+        rawInput: address.rawInput,
+        addressInput: address.addressInput,
+        express: address.express,
+      })),
       results: fallbackResults,
       count: {
         parsed: entries.length,

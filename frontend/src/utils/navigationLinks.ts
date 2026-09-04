@@ -38,6 +38,38 @@ export function wazeStopUrl(target: NavTarget): string {
   return `https://waze.com/ul?${params.toString()}`;
 }
 
+/** MapQuest consumer directions. No API key. */
+export function mapquestStopUrl(target: NavTarget): string {
+  if (hasCoords(target)) {
+    return `https://www.mapquest.com/directions/to/near-${coordDest(target)}`;
+  }
+  if (target.address) {
+    return `https://www.mapquest.com/?q=${encodeURIComponent(target.address)}`;
+  }
+  return "https://www.mapquest.com/";
+}
+
+/**
+ * MapQuest multi-stop directions: start → each stop in order.
+ * The public site accepts a chain of /to/near-lat,lng segments.
+ */
+export function mapquestFullRouteUrl(
+  start: NavTarget,
+  stops: Array<{ lat: number; lng: number }>
+): string {
+  const dests = stops.filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng));
+  if (dests.length === 0) return mapquestStopUrl(start);
+
+  const parts: string[] = [];
+  if (hasCoords(start)) {
+    parts.push(`from/near-${coordDest(start)}`);
+  }
+  for (const stop of dests) {
+    parts.push(`to/near-${stop.lat},${stop.lng}`);
+  }
+  return `https://www.mapquest.com/directions/${parts.join("/")}`;
+}
+
 /**
  * Apple unified Maps URLs (iOS 18.4+). Legacy ?daddr=lat,lng links no longer
  * open navigation reliably on recent iOS versions.
